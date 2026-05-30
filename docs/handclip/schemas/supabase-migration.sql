@@ -16,10 +16,10 @@ create table if not exists public.profiles (
   plan text not null default 'free' check (plan in ('free', 'pro')),
   exports_this_month integer not null default 0,
   last_export_reset_at timestamptz,
+  expo_push_token text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-
 -- projects
 create table if not exists public.projects (
   id uuid primary key default uuid_generate_v4(),

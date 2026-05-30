@@ -80,7 +80,7 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
-          <Text style={styles.title}>HandClip</Text>
+          <Text style={styles.title} accessibilityRole="header">HandClip</Text>
           <Text style={styles.subtitle}>Inicia sesión para continuar</Text>
         </View>
 
@@ -92,10 +92,12 @@ export default function LoginScreen() {
               value={email}
               onChangeText={setEmail}
               placeholder="tu@email.com"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor="#6B7280"
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
+              accessibilityLabel="Correo electrónico"
+              textContentType="emailAddress"
             />
           </View>
 
@@ -106,17 +108,19 @@ export default function LoginScreen() {
               value={password}
               onChangeText={setPassword}
               placeholder="••••••••"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor="#6B7280"
               secureTextEntry
+              accessibilityLabel="Contraseña"
+              textContentType="password"
             />
           </View>
 
           {errorMessage ? (
-            <Text style={styles.errorText}>{errorMessage}</Text>
+            <Text style={styles.errorText} accessibilityRole="alert">{errorMessage}</Text>
           ) : null}
 
           {magicLinkSent ? (
-            <Text style={styles.successText}>
+            <Text style={styles.successText} accessibilityRole="alert">
               Te enviamos un enlace mágico a {email}. Revisa tu correo.
             </Text>
           ) : null}
@@ -125,6 +129,8 @@ export default function LoginScreen() {
             style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleSignIn}
             disabled={loading}
+            accessibilityLabel="Iniciar sesión"
+            accessibilityRole="button"
           >
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -137,6 +143,8 @@ export default function LoginScreen() {
             style={[styles.googleButton, loading && styles.buttonDisabled]}
             onPress={handleGoogleSignIn}
             disabled={loading}
+            accessibilityLabel="Continuar con Google"
+            accessibilityRole="button"
           >
             <Text style={styles.googleButtonText}>G  Continuar con Google</Text>
           </TouchableOpacity>
@@ -145,6 +153,8 @@ export default function LoginScreen() {
             style={styles.magicLinkButton}
             onPress={handleMagicLink}
             disabled={loading}
+            accessibilityLabel="Enviar enlace mágico al correo"
+            accessibilityRole="button"
           >
             <Text style={styles.magicLinkText}>Enviar enlace mágico</Text>
           </TouchableOpacity>
@@ -152,6 +162,8 @@ export default function LoginScreen() {
           <TouchableOpacity
             style={styles.linkContainer}
             onPress={() => router.push('/signup')}
+            accessibilityLabel="Ir a la pantalla de registro"
+            accessibilityRole="link"
           >
             <Text style={styles.linkText}>
               ¿No tienes cuenta?{' '}

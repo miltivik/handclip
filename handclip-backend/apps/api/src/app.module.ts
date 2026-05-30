@@ -1,3 +1,4 @@
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
@@ -36,6 +37,7 @@ import { ExportsModule } from './modules/exports/exports.module';
     JobsModule,
     HealthModule,
     ExportsModule,
+    NotificationsModule,
   ],
   providers: [
     {

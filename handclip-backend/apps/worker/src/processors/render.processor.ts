@@ -287,6 +287,23 @@ export class RenderProcessor extends WorkerHost {
           .eq('id', dbJobId);
       }
 
+      // Send push notification
+      const API_BASE = process.env.API_URL || 'http://localhost:3000';
+      try {
+        await fetch(`${API_BASE}/api/notifications/push`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            title: '¡Tu clip está listo!',
+            message: `El clip en formato ${preset} se ha exportado correctamente.`,
+            data: { projectId, exportId: dbExportId, type: 'export_complete' },
+          }),
+        });
+      } catch (err: any) {
+        console.warn(`[Render] Push notification failed (non-blocking): ${err.message}`);
+      }
+
       await job.updateProgress(100);
       console.log(`[Render] Completed for project ${projectId}`);
 

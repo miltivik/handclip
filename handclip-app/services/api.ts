@@ -144,6 +144,14 @@ export const api = {
     return { url: path };
   },
 
+  // ---- Audio ----
+  uploadAudioFile: async (file: { uri: string; fileName?: string; mimeType?: string; fileSize?: number }): Promise<{ audioUrl: string }> => {
+    // Reuse uploadFile — it works for any file type (audio included)
+    const name = file.fileName ?? 'audio.mp3';
+    const type = file.mimeType ?? 'audio/mpeg';
+    const { url } = await api.uploadFile({ uri: file.uri, name, type });
+    return { audioUrl: url };
+  },
   // ---- Health ----
   checkHealth: () =>
     get<{ status: string; timestamp: string; checks: Record<string, string> }>('/health'),

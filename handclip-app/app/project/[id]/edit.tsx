@@ -1,3 +1,4 @@
+import * as DocumentPicker from 'expo-document-picker';
 import { useEffect, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { View, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
@@ -31,7 +32,8 @@ export default function EditScreen() {
     setSubtitles,
   } = useEditorStore();
   const [editingSubtitle, setEditingSubtitle] = useState<EditingSubtitle | null>(null);
-
+  const [musicUrl, setMusicUrl] = useState<string | null>(null);
+  const [musicVolume, setMusicVolume] = useState(0.3);
   const {
     currentProject,
     clips,
@@ -87,6 +89,12 @@ export default function EditScreen() {
         trimEnd,
         subtitles: exportSubtitles,
         preset,
+        ...(musicUrl && {
+          musicUrl,
+          musicVolume,
+          musicFadeIn: 0.5,
+          musicFadeOut: 0.5,
+        }),
       });
       router.push(`/project/${id}/export?jobId=${result.jobId}&preset=${preset}`);
     } catch (err) {
@@ -107,6 +115,28 @@ export default function EditScreen() {
   };
   const handleSubtitleCancel = () => {
     setEditingSubtitle(null);
+  };
+  const handleSelectMusic = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ type: 'audio/*' });
+      if (result.canceled || !result.assets?.length) return;
+      const asset = result.assets[0];
+      const { audioUrl } = await api.uploadAudioFile({
+        uri: asset.uri,
+        fileName: asset.name,
+        mimeType: asset.mimeType ?? undefined,
+      });
+      setMusicUrl(audioUrl);
+    } catch (err) {
+      Alert.alert('Error', 'No se pudo subir el audio');
+    }
+  };
+  const handleRemoveMusic = () => {
+    setMusicUrl(null);
+    setMusicVolume(0.3);
+  };
+  const handleVolumeChange = (delta: number) => {
+    setMusicVolume((prev) => Math.max(0, Math.min(2, prev + delta)));
   };
   const displaySubtitles = subtitles.length > 0 ? subtitles : projectSubtitles;
 
@@ -144,6 +174,37 @@ export default function EditScreen() {
           onCancel={handleSubtitleCancel}
         />
       )}
+      {/* Music import */}
+      <View style={styles.musicSection}>
+        <Text style={styles.musicLabel}>🎵 Música</Text>
+        {!musicUrl ? (
+          <TouchableOpacity style={styles.musicSelectButton} onPress={handleSelectMusic}>
+            <Text style={styles.musicSelectButtonText}>Seleccionar audio</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.musicControls}>
+            <Text style={styles.musicFileName}>🎶 Audio agregado</Text>
+            <View style={styles.volumeControls}>
+              <TouchableOpacity
+                style={styles.volumeButton}
+                onPress={() => handleVolumeChange(-0.1)}
+              >
+                <Text style={styles.volumeButtonText}>−</Text>
+              </TouchableOpacity>
+              <Text style={styles.volumeLabel}>{Math.round(musicVolume * 100)}%</Text>
+              <TouchableOpacity
+                style={styles.volumeButton}
+                onPress={() => handleVolumeChange(0.1)}
+              >
+                <Text style={styles.volumeButtonText}>+</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity style={styles.removeMusicButton} onPress={handleRemoveMusic}>
+              <Text style={styles.removeMusicButtonText}>Quitar</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
 
       <View style={styles.timelineContainer}>
         <Timeline
@@ -197,6 +258,73 @@ const styles = StyleSheet.create({
   exportButtonText: {
     color: '#fff',
     fontSize: 18,
+  },
+  musicSection: {
+    padding: 12,
+    backgroundColor: '#1a1a1a',
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  musicLabel: {
+    color: '#fff',
+    fontSize: 14,
     fontWeight: '600',
+    marginBottom: 8,
+  },
+  musicSelectButton: {
+    backgroundColor: '#333',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  musicSelectButtonText: {
+    color: '#fff',
+    fontSize: 14,
+  },
+  musicControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  musicFileName: {
+    color: '#aaa',
+    fontSize: 13,
+    flex: 1,
+  },
+  volumeControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  volumeButton: {
+    backgroundColor: '#444',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  volumeButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  volumeLabel: {
+    color: '#fff',
+    fontSize: 14,
+    marginHorizontal: 10,
+    minWidth: 40,
+    textAlign: 'center',
+  },
+  removeMusicButton: {
+    backgroundColor: '#ff4444',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    marginLeft: 8,
+  },
+  removeMusicButtonText: {
+    color: '#fff',
+    fontSize: 12,
   },
 });
