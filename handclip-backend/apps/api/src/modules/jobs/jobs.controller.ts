@@ -7,14 +7,7 @@ import { JobsService } from './jobs.service';
 export class JobsController {
   constructor(private readonly jobsService: JobsService) {}
 
-  @Post('projects/:projectId/analyze')
-  async analyze(
-    @Param('projectId') projectId: string,
-    @Body() body: { videoUrl: string },
-  ) {
-    const result = await this.jobsService.enqueueAnalysis(projectId, body.videoUrl);
-    return { jobId: result.jobId };
-  }
+  // analyze endpoint is in ProjectsController to avoid route conflict
 
   @Get('jobs/:jobId')
   async getJobStatus(@Param('jobId') jobId: string) {
@@ -36,7 +29,6 @@ export class JobsController {
       );
 
       const handler = async (args: { jobId?: string; data?: any }) => {
-        // Filter to only events for this jobId
         if (args.jobId && args.jobId !== jobId) return;
 
         try {
@@ -51,7 +43,6 @@ export class JobsController {
         }
       };
 
-      // Attach handlers to all queue event streams
       for (const qe of queueEventsList) {
         qe.on('progress', handler);
         qe.on('completed', handler);

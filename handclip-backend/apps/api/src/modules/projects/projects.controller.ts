@@ -79,8 +79,16 @@ export class ProjectsController {
 
   @Delete(':id')
   async remove(@Param('id') id: string) {
-    await this.projectsService.remove(id);
-    return { success: true };
+    return this.projectsService.remove(id);
+  }
+
+  @Post(':id/analyze')
+  async analyze(
+    @Param('id') id: string,
+    @Body() body: { videoUrl: string },
+  ) {
+    const result = await this.jobsService.enqueueAnalysis(id, body.videoUrl);
+    return { jobId: result.jobId };
   }
 
   @Post(':id/export')

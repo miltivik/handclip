@@ -10,6 +10,14 @@ export class ClipsController {
     return this.clipsService.findByProject(projectId);
   }
 
+  @Post('projects/:projectId/clips/manual')
+  async createManualClip(
+    @Param('projectId') projectId: string,
+    @Body() body: { startTime: number; endTime: number },
+  ) {
+    return this.clipsService.createManualClip(projectId, body.startTime, body.endTime);
+  }
+
   @Post('projects/:projectId/clips/:clipId/select')
   async selectClip(
     @Param('projectId') projectId: string,
