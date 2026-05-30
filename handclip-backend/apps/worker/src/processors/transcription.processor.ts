@@ -96,12 +96,21 @@ export class TranscriptionProcessor extends WorkerHost {
       await job.updateProgress(40);
       console.log(`[Transcription] Calling Whisper API for project ${projectId}`);
 
-      const transcription = await this.openai.audio.transcriptions.create({
-        file: fs.createReadStream(audioPath),
-        model: 'whisper-1',
-        response_format: 'verbose_json',
-        timestamp_granularities: ['word'],
-      });
+      // Step 3: Call Whisper API with word-level timestamps (with fallback)
+      let transcription: any;
+      try {
+        transcription = await this.openai.audio.transcriptions.create({
+          file: fs.createReadStream(audioPath),
+          model: 'whisper-1',
+          response_format: 'verbose_json',
+          timestamp_granularities: ['word'],
+        });
+      } catch (apiError: any) {
+        console.warn(`[Transcription] OpenAI Whisper failed: ${apiError.message}. Falling back to local mode.`);
+        // Local fallback: use FFmpeg silence detection + basic segmentation
+        // This is a degraded mode — no word-level timestamps, just segment detection
+        transcription = await this.localTranscriptionFallback(audioPath, job);
+      }
 
       if (dbJobId) {
         await supabase.from('jobs').update({ progress: 70 }).eq('id', dbJobId);
@@ -204,5 +213,46 @@ export class TranscriptionProcessor extends WorkerHost {
       try { fs.unlinkSync(videoPath); } catch {}
       try { fs.unlinkSync(audioPath); } catch {}
     }
+  }
+  private async localTranscriptionFallback(
+    audioPath: string,
+    job: Job<TranscriptionJobData>,
+  ): Promise<{ segments: any[]; language: string }> {
+    // Use FFmpeg silencedetect to find speech segments
+    // This provides rough timestamps without actual transcription
+    const { stdout } = await execAsync(
+      `ffmpeg -i "${audioPath}" -af "silencedetect=n=-30dB:d=0.5" -f null - 2>&1`,
+      { timeout: 60000 },
+    );
+    // Parse silence_start/silence_end from FFmpeg output
+    const silenceStarts: number[] = [];
+    const silenceEnds: number[] = [];
+    const lines = stdout.split('\n');
+    for (const line of lines) {
+      const startMatch = line.match(/silence_start: ([\d.]+)/);
+      const endMatch = line.match(/silence_end: ([\d.]+)/);
+      if (startMatch) silenceStarts.push(parseFloat(startMatch[1]));
+      if (endMatch) silenceEnds.push(parseFloat(endMatch[1]));
+    }
+    // Build segments from non-silence regions
+    const segments: any[] = [];
+    let segIdx = 0;
+    let lastEnd = 0;
+    for (let i = 0; i < silenceStarts.length; i++) {
+      if (silenceStarts[i] > lastEnd) {
+        // Non-silence region: [lastEnd, silenceStarts[i]]
+        segments.push({
+          id: `local-${job.data.projectId}-${segIdx}`,
+          start: lastEnd,
+          end: silenceStarts[i],
+          text: `[Segmento ${segIdx + 1}]`,
+          words: [],
+        });
+        segIdx++;
+      }
+      lastEnd = silenceEnds[i] || silenceStarts[i];
+    }
+    console.log(`[Transcription] Local fallback produced ${segments.length} segments`);
+    return { segments, language: 'unknown' };
   }
 }

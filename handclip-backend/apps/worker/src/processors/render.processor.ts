@@ -92,6 +92,7 @@ export class RenderProcessor extends WorkerHost {
     const outputPath = path.join(tempDir, `${projectId}-output.mp4`);
     const inputPath = path.join(tempDir, `${projectId}-render-input.mp4`);
     const srtPath = path.join(tempDir, `${projectId}-subs.srt`);
+    const thumbPath = path.join(tempDir, `${projectId}-thumb.jpg`);
 
     // Check export limit for free tier (3/month)
     const { allowed, count } = await incrementExportCount(userId, supabase);
@@ -154,11 +155,69 @@ export class RenderProcessor extends WorkerHost {
       await job.updateProgress(30);
       console.log(`[Render] FFmpeg: ${cmd}`);
 
-      // Step 5: Execute FFmpeg
-      await execAsync(cmd, { timeout: 300000 }); // 5 min timeout
+      // Step 5: Execute FFmpeg with codec fallback
+      const codecFallbacks = [
+        { codec: 'libx264', preset: config.preset, crf: config.crf },
+        { codec: 'libx265', preset: 'fast', crf: 23 },       // H.265 fallback
+        { codec: 'libx264', preset: 'ultrafast', crf: 28 },   // speed-over-quality fallback
+      ];
+      let lastError: Error | null = null;
+      for (let attempt = 0; attempt < codecFallbacks.length; attempt++) {
+        const fb = codecFallbacks[attempt];
+        const attemptCmd = this.buildFFmpegCommand({
+          inputPath,
+          srtPath: subtitles.length > 0 ? srtPath : null,
+          musicPath,
+          trimStart,
+          trimEnd,
+          config,
+          musicVolume,
+          musicFadeIn,
+          musicFadeOut,
+          outputPath,
+          codec: fb.codec,
+          preset: fb.preset,
+          crf: fb.crf,
+        });
+        try {
+          await execAsync(attemptCmd, { timeout: 300000 });
+          lastError = null;
+          break;
+        } catch (err: any) {
+          lastError = err;
+          console.warn(`[Render] FFmpeg attempt ${attempt + 1}/${codecFallbacks.length} failed: ${err.message}`);
+        }
+      }
+      if (lastError) throw lastError;
 
       if (dbJobId) await supabase.from('jobs').update({ progress: 90 }).eq('id', dbJobId);
       await job.updateProgress(90);
+      // Generate thumbnail at clip midpoint
+      const midPoint = trimStart + (trimEnd - trimStart) / 2;
+      let thumbnailUrl: string | null = null;
+      try {
+        await execAsync(
+          `ffmpeg -ss ${midPoint} -i "${inputPath}" -vframes 1 -q:v 2 -y "${thumbPath}"`,
+          { timeout: 10000 }
+        );
+        // Upload thumbnail to Supabase Storage
+        const thumbBuffer = fs.readFileSync(thumbPath);
+        const thumbStoragePath = `${projectId}/${preset}/thumbnail.jpg`;
+        const { error: thumbError } = await supabase.storage
+          .from('thumbnails')
+          .upload(thumbStoragePath, thumbBuffer, {
+            contentType: 'image/jpeg',
+            upsert: true,
+          });
+        if (!thumbError) {
+          const { data: thumbSigned } = await supabase.storage
+            .from('thumbnails')
+            .createSignedUrl(thumbStoragePath, 7 * 24 * 3600);
+          thumbnailUrl = thumbSigned?.signedUrl || null;
+        }
+      } catch (thumbErr: any) {
+        console.warn(`[Render] Thumbnail generation failed (non-blocking): ${thumbErr.message}`);
+      }
 
       // Step 6: Upload to Supabase Storage
       const storagePath = `${projectId}/${preset}/output.mp4`;
@@ -201,6 +260,7 @@ export class RenderProcessor extends WorkerHost {
             output_url: outputUrl,
             file_size: fileSize,
             duration,
+            thumbnail_url: thumbnailUrl,
             completed_at: new Date().toISOString(),
           })
           .eq('id', dbExportId);
@@ -261,6 +321,8 @@ export class RenderProcessor extends WorkerHost {
       for (const f of [inputPath, srtPath, musicPath, outputPath]) {
         if (f) try { fs.unlinkSync(f); } catch {}
       }
+      // Cleanup thumbnail
+      if (thumbPath) try { fs.unlinkSync(thumbPath); } catch {}
     }
   }
 
@@ -293,8 +355,11 @@ export class RenderProcessor extends WorkerHost {
     musicFadeIn?: number;
     musicFadeOut?: number;
     outputPath: string;
+    codec?: string;
+    preset?: string;
+    crf?: number;
   }): string {
-    const { inputPath, srtPath, musicPath, trimStart, trimEnd, config, musicVolume, musicFadeIn, musicFadeOut, outputPath } = opts;
+    const { inputPath, srtPath, musicPath, trimStart, trimEnd, config, musicVolume, musicFadeIn, musicFadeOut, outputPath, codec, preset, crf } = opts;
     const duration = trimEnd - trimStart;
 
     // Filter chain for video
@@ -353,7 +418,10 @@ export class RenderProcessor extends WorkerHost {
 
     cmd += ` -filter_complex "${filterParts.join(';')}"`;
     cmd += ` -map "[vout]" -map "[aout]"`;
-    cmd += ` -c:v libx264 -preset ${config.preset} -crf ${config.crf}`;
+    const finalCodec = codec || 'libx264';
+    const finalPreset = preset || config.preset;
+    const finalCrf = crf !== undefined ? crf : config.crf;
+    cmd += ` -c:v ${finalCodec} -preset ${finalPreset} -crf ${finalCrf}`;
     // Robust bitrate parsing: handle both '8M' and '8000k' formats
     const bitrateNum = parseInt(config.videoBitrate.replace(/[^0-9]/g, ''), 10);
     cmd += ` -maxrate ${config.videoBitrate} -bufsize ${bitrateNum * 2}k`;

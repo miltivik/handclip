@@ -5,7 +5,12 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "start": "turbo run start"
+    "start": "turbo run start",
+    "lint": "turbo run lint",
+    "type-check": "turbo run type-check",
+    "test": "turbo run test",
+    "db:migrate": "echo 'Run migration SQL in Supabase Dashboard'",
+    "db:seed": "echo 'No seed data yet'"
   },
   "devDependencies": {
     "turbo": "^2.4.4",
