@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EditAction",
+  "description": "Acción de edición sugerida por la IA. Requiere confirmación del usuario antes de aplicar.",
+  "type": "object",
+  "required": [
+    "id",
+    "action_type",
+    "target_time",
+    "parameters",
+    "requires_confirmation"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Identificador único de la acción"
+    },
+    "action_type": {
+      "type": "string",
+      "enum": [
+        "trim",
+        "add_caption",
+        "add_subtitle",
+        "add_transition",
+        "speed_change",
+        "add_soundtrack",
+        "overlay_text",
+        "crop_to_aspect",
+        "color_adjust",
+        "add_hook_frame",
+        "add_ending_card"
+      ]
+    },
+    "target_time": {
+      "type": "number",
+      "description": "Tiempo objetivo en segundos donde aplicar la acción"
+    },
+    "duration": {
+      "type": "number",
+      "description": "Duración afectada por la acción (si aplica)",
+      "minimum": 0
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Parámetros específicos de cada tipo de acción",
+      "properties": {
+        "caption_text": {
+          "type": "string"
+        },
+        "caption_style": {
+          "type": "string",
+          "enum": [
+            "default",
+            "bold",
+            "animated",
+            "highlight_words"
+          ]
+        },
+        "subtitle_segment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "start_time": {
+          "type": "number"
+        },
+        "end_time": {
+          "type": "number"
+        },
+        "speed_factor": {
+          "type": "number",
+          "minimum": 0.25,
+          "maximum": 4.0
+        },
+        "aspect_ratio": {
+          "type": "string",
+          "enum": [
+            "9:16",
+            "16:9",
+            "1:1",
+            "4:5"
+          ]
+        },
+        "transition_type": {
+          "type": "string",
+          "enum": [
+            "cut",
+            "fade",
+            "dissolve",
+            "slide"
+          ]
+        },
+        "color_preset": {
+          "type": "string",
+          "enum": [
+            "none",
+            "warm",
+            "cool",
+            "vintage",
+            "cinematic",
+            "vibrant"
+          ]
+        }
+      }
+    },
+    "ai_confidence": {
+      "type": "integer",
+      "description": "Confianza de la IA en esta acción (0-100)",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "requires_confirmation": {
+      "type": "boolean",
+      "const": true,
+      "description": "Siempre true. El usuario debe confirmar cada acción."
+    },
+    "undo_action_id": {
+      "type": "string",
+      "description": "ID de la acción para deshacer esta acción"
+    }
+  }
+}

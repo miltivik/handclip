@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SubtitleSegment",
+  "description": "Segmento de subtítulo con word-level timestamps. Timestamps source: Whisper word-level output, no estimados por LLM.",
+  "type": "object",
+  "required": [
+    "id",
+    "text",
+    "start_time",
+    "end_time",
+    "words",
+    "language"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Identificador único del segmento"
+    },
+    "text": {
+      "type": "string",
+      "description": "Texto completo del segmento"
+    },
+    "start_time": {
+      "type": "number",
+      "description": "Tiempo de inicio en segundos (fuente: Whisper)",
+      "minimum": 0
+    },
+    "end_time": {
+      "type": "number",
+      "description": "Tiempo de fin en segundos (fuente: Whisper)",
+      "minimum": 0
+    },
+    "words": {
+      "type": "array",
+      "description": "Timestamps word-level desde Whisper",
+      "items": {
+        "type": "object",
+        "required": [
+          "word",
+          "start",
+          "end",
+          "probability"
+        ],
+        "properties": {
+          "word": {
+            "type": "string"
+          },
+          "start": {
+            "type": "number",
+            "description": "Inicio de la palabra en segundos"
+          },
+          "end": {
+            "type": "number",
+            "description": "Fin de la palabra en segundos"
+          },
+          "probability": {
+            "type": "number",
+            "description": "Probabilidad de reconocimiento de Whisper",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "language": {
+      "type": "string",
+      "description": "Código ISO 639-1 del idioma"
+    },
+    "speaker": {
+      "type": "string",
+      "description": "Identificador de hablante (diarización futura)"
+    },
+    "style_hints": {
+      "type": "object",
+      "description": "Sugerencias de estilo para rendering",
+      "properties": {
+        "capitalize": {
+          "type": "boolean",
+          "default": false
+        },
+        "emoji": {
+          "type": "boolean",
+          "default": false
+        },
+        "highlight_words": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "position": {
+          "type": "string",
+          "enum": [
+            "bottom",
+            "top",
+            "center"
+          ],
+          "default": "bottom"
+        }
+      }
+    }
+  }
+}

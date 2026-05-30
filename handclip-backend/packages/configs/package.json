@@ -1,0 +1,11 @@
+{
+  "name": "@handclip/configs",
+  "version": "0.1.0",
+  "private": true,
+  "main": "tsconfig.base.json",
+  "files": ["tsconfig.base.json"],
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+  }
+}

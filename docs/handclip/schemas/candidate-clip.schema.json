@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ClipCandidate",
+  "description": "Un segmento de video identificado como candidato potencial para convertirse en clip. Score es referencia, no garantía de viralidad.",
+  "type": "object",
+  "required": [
+    "id",
+    "start_time",
+    "end_time",
+    "confidence_score",
+    "reasons",
+    "suggested_caption"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Identificador único del clip candidato",
+      "example": "clip_cand_001"
+    },
+    "start_time": {
+      "type": "number",
+      "description": "Tiempo de inicio en segundos",
+      "minimum": 0,
+      "example": 12.5
+    },
+    "end_time": {
+      "type": "number",
+      "description": "Tiempo de fin en segundos",
+      "minimum": 0,
+      "example": 45.2
+    },
+    "duration": {
+      "type": "number",
+      "description": "Duración calculada del clip candidato",
+      "minimum": 0,
+      "maximum": 300,
+      "example": 32.7
+    },
+    "confidence_score": {
+      "type": "integer",
+      "description": "Puntuación 0-100. Solo referencia para el usuario, no garantiza viralidad.",
+      "minimum": 0,
+      "maximum": 100,
+      "example": 78
+    },
+    "reasons": {
+      "type": "array",
+      "description": "Razones que justifican la detección del momento",
+      "items": {
+        "type": "string",
+        "enum": [
+          "high_energy",
+          "emotional_peak",
+          "key_statement",
+          "punchline",
+          "reveal_moment",
+          "question_engagement",
+          "call_to_action",
+          "contrast_shift",
+          "informative",
+          "visual_interest"
+        ]
+      },
+      "minItems": 1
+    },
+    "suggested_caption": {
+      "type": "string",
+      "description": "Caption sugerido basado en la transcripción. Requiere revisión del usuario.",
+      "maxLength": 300
+    },
+    "transcript_snippet": {
+      "type": "string",
+      "description": "Fragmento de transcripción del momento"
+    },
+    "mood_tags": {
+      "type": "array",
+      "description": "Etiquetas de tono emocional",
+      "items": {
+        "type": "string",
+        "enum": [
+          "inspirational",
+          "funny",
+          "controversial",
+          "educational",
+          "emotional",
+          "mysterious",
+          "uplifting"
+        ]
+      }
+    },
+    "platform_targets": {
+      "type": "array",
+      "description": "Plataformas recomendadas (el usuario decide)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "tiktok",
+          "instagram_reels",
+          "youtube_shorts",
+          "x"
+        ]
+      }
+    }
+  }
+}

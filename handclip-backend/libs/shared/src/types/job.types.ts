@@ -1,0 +1,12 @@
+export enum JobType {
+  TRANSCRIPTION = 'TRANSCRIPTION',
+  CLIP_ANALYSIS = 'CLIP_ANALYSIS',
+  RENDER = 'RENDER',
+}
+
+export enum JobStatus {
+  QUEUED = 'QUEUED',
+  ACTIVE = 'ACTIVE',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+}
