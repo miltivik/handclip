@@ -20,8 +20,15 @@ export class ProjectsController {
   ) {}
 
   @Post()
-  async create(@Body() body: { name: string; description?: string }) {
-    return this.projectsService.create(body.name, body.description);
+  async create(@Body() body: {
+    name: string;
+    description?: string;
+    sourceVideoUrl?: string;
+    duration?: number;
+    width?: number;
+    height?: number;
+  }) {
+    return this.projectsService.create(body);
   }
 
   @Post('upload')
@@ -106,6 +113,7 @@ export class ProjectsController {
       musicFadeIn: body.musicFadeIn,
       musicFadeOut: body.musicFadeOut,
       preset: body.preset || 'tiktok',
+      clipId: body.clipId,
     });
 
     return result;

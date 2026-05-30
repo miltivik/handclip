@@ -1,14 +1,18 @@
 import { useEffect } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { View, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
+import { VideoView } from 'expo-video';
 import Preview from '../../../components/editor/Preview';
 import Timeline from '../../../components/editor/Timeline';
 import { useEditorStore } from '../../../stores/editor.store';
+import { useProjectStore } from '../../../stores/project.store';
+import { useAppVideoPlayer } from '../../../hooks/useVideoPlayer';
 import { api } from '../../../services/api';
 
 export default function EditScreen() {
   const { id, clipId } = useLocalSearchParams<{ id: string; clipId: string }>();
   const router = useRouter();
+
   const {
     trimStart,
     trimEnd,
@@ -18,10 +22,40 @@ export default function EditScreen() {
     setTrimEnd,
   } = useEditorStore();
 
+  const {
+    currentProject,
+    clips,
+    fetchProject,
+    fetchClips,
+    fetchSubtitles,
+    subtitles: projectSubtitles,
+  } = useProjectStore();
+
+  // Load project, clips, and subtitles on mount
   useEffect(() => {
-    setTrimStart(0);
-    setTrimEnd(15);
-  }, [clipId, setTrimStart, setTrimEnd]);
+    if (!id) return;
+    fetchProject(id);
+    fetchClips(id);
+  }, [id, fetchProject, fetchClips]);
+
+  // Load subtitles when clipId changes
+  useEffect(() => {
+    if (!id || !clipId) return;
+    fetchSubtitles(id, clipId);
+  }, [id, clipId, fetchSubtitles]);
+
+  // Find selected clip and set trim handles from clip's actual times
+  useEffect(() => {
+    if (!clips.length || !clipId) return;
+    const selectedClip = clips.find((c) => c.id === clipId);
+    if (selectedClip) {
+      setTrimStart(selectedClip.startTime);
+      setTrimEnd(selectedClip.endTime);
+    }
+  }, [clips, clipId, setTrimStart, setTrimEnd]);
+
+  const videoUrl = currentProject?.sourceVideoUrl || '';
+  const { player, currentTime, duration } = useAppVideoPlayer(videoUrl);
 
   const handleExport = async () => {
     if (!clipId) {
@@ -29,16 +63,19 @@ export default function EditScreen() {
       return;
     }
     try {
+      // Use subtitles from editor store or project store
+      const exportSubtitles = subtitles.length > 0 ? subtitles : projectSubtitles.map((s) => ({
+        id: s.id,
+        text: s.text,
+        startTime: s.startTime,
+        endTime: s.endTime,
+      }));
+
       const result = await api.exportClip(id!, {
         clipId,
         trimStart,
         trimEnd,
-        subtitles: subtitles.map((s) => ({
-          id: (s as { id?: string }).id || '',
-          text: s.text,
-          startTime: s.startTime,
-          endTime: s.endTime,
-        })),
+        subtitles: exportSubtitles,
         preset,
       });
       router.push(`/project/${id}/export?jobId=${result.jobId}&preset=${preset}`);
@@ -47,20 +84,35 @@ export default function EditScreen() {
     }
   };
 
+  const displaySubtitles = subtitles.length > 0 ? subtitles : projectSubtitles;
+
   return (
     <View style={styles.container}>
       <View style={styles.previewContainer}>
-        <Preview videoUri="placeholder" subtitles={[]} />
+        {player ? (
+          <VideoView
+            style={styles.video}
+            player={player}
+            allowsFullscreen
+            allowsPictureInPicture
+          />
+        ) : (
+          <Preview
+            videoUri={videoUrl || 'placeholder'}
+            subtitles={displaySubtitles}
+            currentTime={currentTime}
+          />
+        )}
       </View>
 
       <View style={styles.timelineContainer}>
         <Timeline
-          duration={180}
+          duration={duration || currentProject?.duration || 0}
           trimStart={trimStart}
           trimEnd={trimEnd}
           onTrimStartChange={setTrimStart}
           onTrimEndChange={setTrimEnd}
-          bRollMarkers={[30, 60, 90]}
+          bRollMarkers={[]}
         />
       </View>
 
@@ -81,6 +133,12 @@ const styles = StyleSheet.create({
   previewContainer: {
     flex: 1,
     backgroundColor: '#1a1a1a',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  video: {
+    width: '100%',
+    height: '100%',
   },
   timelineContainer: {
     height: 200,

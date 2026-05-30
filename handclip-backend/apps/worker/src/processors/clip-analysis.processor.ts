@@ -1,8 +1,8 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { ClipCandidate, ClipCandidateSchema, SubtitleSegment } from '@handclip/shared';
+import { SupabaseService } from '../modules/supabase/supabase.service';
 import { providerManager, StageTask } from '../providers/provider-manager';
-
 const CLIP_ANALYSIS_SYSTEM_PROMPT = `Eres un analista de contenido para redes sociales. Tu tarea es identificar los mejores momentos de una transcripción de video para crear clips cortos virales (TikTok, Reels, Shorts).
 
 Analiza la transcripción y devuelve un JSON con este formato exacto:
@@ -156,20 +156,53 @@ function parseAndValidateClips(content: string): ClipCandidate[] {
 
 @Processor('clip-analysis')
 export class ClipAnalysisProcessor extends WorkerHost {
+  constructor(private readonly supabaseService: SupabaseService) {
+    super();
+  }
+
   async process(job: Job<ClipAnalysisJobData>): Promise<{ clips: ClipCandidate[] }> {
     const { projectId, transcriptionSegments } = job.data;
+    const supabase = this.supabaseService.getServiceRoleClient();
+
+    // Create job record in DB
+    const { data: jobRecord, error: jobCreateError } = await supabase
+      .from('jobs')
+      .insert({
+        project_id: projectId,
+        type: 'clip_analysis',
+        status: 'active',
+        progress: 10,
+        bullmq_id: job.id,
+      })
+      .select('id')
+      .single();
+
+    if (jobCreateError) {
+      console.error(`[ClipAnalysis] Failed to create job record: ${jobCreateError.message}`);
+    }
+    const dbJobId = jobRecord?.id;
 
     await job.updateProgress(10);
     console.log(`[ClipAnalysis] Analyzing clips for project ${projectId}`);
 
     // Validate we have transcription data
     if (!transcriptionSegments || transcriptionSegments.length === 0) {
+      if (dbJobId) {
+        await supabase
+          .from('jobs')
+          .update({ status: 'completed', progress: 100, result: { clips_count: 0 }, updated_at: new Date().toISOString() })
+          .eq('id', dbJobId);
+      }
+      await supabase.from('projects').update({ status: 'ready' }).eq('id', projectId);
       await job.updateProgress(50);
       console.warn(`[ClipAnalysis] No transcription segments for project ${projectId}, returning empty`);
       await job.updateProgress(100);
       return { clips: [] };
     }
 
+    if (dbJobId) {
+      await supabase.from('jobs').update({ progress: 30 }).eq('id', dbJobId);
+    }
     await job.updateProgress(30);
     console.log(`[ClipAnalysis] Processing ${transcriptionSegments.length} transcription segments`);
 
@@ -182,6 +215,9 @@ export class ClipAnalysisProcessor extends WorkerHost {
       temperature: 0.3,
     };
 
+    if (dbJobId) {
+      await supabase.from('jobs').update({ progress: 40 }).eq('id', dbJobId);
+    }
     await job.updateProgress(40);
 
     // Call LLM with fallback
@@ -192,6 +228,9 @@ export class ClipAnalysisProcessor extends WorkerHost {
       try {
         const result = await providerManager.callWithFallback(task);
 
+        if (dbJobId) {
+          await supabase.from('jobs').update({ progress: 60 }).eq('id', dbJobId);
+        }
         await job.updateProgress(60);
         console.log(`[ClipAnalysis] Received response from ${result.provider} (${result.model})`);
         console.log(
@@ -200,15 +239,54 @@ export class ClipAnalysisProcessor extends WorkerHost {
 
         const clips = parseAndValidateClips(result.content);
 
+        if (dbJobId) {
+          await supabase.from('jobs').update({ progress: 80 }).eq('id', dbJobId);
+        }
         await job.updateProgress(80);
         console.log(`[ClipAnalysis] Validated ${clips.length} clip candidates`);
 
-        await job.updateProgress(90);
-        console.log(`[ClipAnalysis] Scoring and ranking clips for project ${projectId}`);
+        // Persist clips to DB
+        if (clips.length > 0) {
+          const clipRows = clips.map((clip) => ({
+            project_id: projectId,
+            start_time: clip.startTime,
+            end_time: clip.endTime,
+            duration: clip.endTime - clip.startTime,
+            confidence_score: clip.confidenceScore,
+            reasons: clip.reasons || [],
+            suggested_caption: clip.suggestedCaption || '',
+            transcript_snippet: clip.transcriptSnippet || '',
+            mood_tags: clip.moodTags || [],
+            platform_targets: clip.platformTargets || [],
+            status: 'candidate',
+          }));
+
+          const { error: insertError } = await supabase.from('clips').insert(clipRows);
+          if (insertError) {
+            console.error(`[ClipAnalysis] Failed to persist clips: ${insertError.message}`);
+          } else {
+            console.log(`[ClipAnalysis] Persisted ${clips.length} clips to DB`);
+          }
+        }
 
         // Sort by confidence score descending
         clips.sort((a, b) => (b.confidenceScore || 0) - (a.confidenceScore || 0));
 
+        // Mark project as ready
+        await supabase.from('projects').update({ status: 'ready' }).eq('id', projectId);
+
+        // Mark job as completed
+        if (dbJobId) {
+          await supabase
+            .from('jobs')
+            .update({
+              status: 'completed',
+              progress: 100,
+              result: { clips_count: clips.length },
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', dbJobId);
+        }
         await job.updateProgress(100);
         console.log(`[ClipAnalysis] Completed for project ${projectId}`);
 
@@ -218,15 +296,29 @@ export class ClipAnalysisProcessor extends WorkerHost {
 
         if (attempt < MAX_RETRIES) {
           console.warn(`[ClipAnalysis] Attempt ${attempt + 1} failed, retrying with stricter prompt...`);
-          // Add strict prompt suffix for retry
           task.userPrompt = buildUserPrompt(transcriptionSegments) + '\n\n' + CLIP_ANALYSIS_STRICT_PROMPT;
-          await job.updateProgress(45 + attempt * 10); // Increment progress during retry
+          await job.updateProgress(45 + attempt * 10);
         }
       }
     }
 
     // All retries failed
     console.error(`[ClipAnalysis] All attempts failed for project ${projectId}:`, lastError?.message);
+
+    if (dbJobId) {
+      await supabase
+        .from('jobs')
+        .update({
+          status: 'failed',
+          progress: 0,
+          result: { error: lastError?.message },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', dbJobId);
+    }
+
+    await supabase.from('projects').update({ status: 'failed' }).eq('id', projectId);
+
     throw lastError || new Error('Clip analysis failed after all retries');
   }
 }

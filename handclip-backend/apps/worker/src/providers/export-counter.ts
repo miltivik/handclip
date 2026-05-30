@@ -1,11 +1,9 @@
-import { createClient } from '@supabase/supabase-js';
+import { SupabaseClient } from '@supabase/supabase-js';
 
-export async function incrementExportCount(userId: string): Promise<{ allowed: boolean; count: number }> {
-  const supabase = createClient(
-    process.env.SUPABASE_URL || '',
-    process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-  );
-
+export async function incrementExportCount(
+  userId: string,
+  supabase: SupabaseClient,
+): Promise<{ allowed: boolean; count: number }> {
   const { data: profile } = await supabase
     .from('profiles')
     .select('exports_this_month, last_export_reset_at')

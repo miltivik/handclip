@@ -2,21 +2,35 @@ import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { JobStatusDto } from '@handclip/shared';
+import { SupabaseService } from '../supabase/supabase.service';
 
 interface AnalysisJob {
   projectId: string;
   videoUrl: string;
 }
 
+interface JobsRow {
+  id: string;
+  project_id: string;
+  type: string;
+  status: string;
+  progress: number;
+  result: any;
+  bullmq_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
 @Injectable()
 export class JobsService {
-  // In-memory progress cache for sync access
+  // Lightweight read cache (write-through from updateJobProgress)
   private progressCache = new Map<string, JobStatusDto>();
 
   constructor(
     @InjectQueue('transcription') private transcriptionQueue: Queue,
     @InjectQueue('clip-analysis') private clipAnalysisQueue: Queue,
     @InjectQueue('render') private renderQueue: Queue,
+    private supabaseService: SupabaseService,
   ) {}
 
   async enqueueRender(data: {
@@ -31,12 +45,31 @@ export class JobsService {
     musicFadeIn?: number;
     musicFadeOut?: number;
     preset: 'tiktok' | 'reels' | 'shorts' | 'draft' | 'hq';
+    clipId?: string;
   }) {
     const job = await this.renderQueue.add('render-video', data, {
       attempts: 2,
       backoff: { type: 'exponential', delay: 5000 },
     });
-    return { jobId: job.id };
+
+    const supabase = this.supabaseService.getServiceRoleClient();
+    const { data: jobsRow, error } = await supabase
+      .from('jobs')
+      .insert({
+        project_id: data.projectId,
+        type: 'render',
+        status: 'queued',
+        progress: 0,
+        bullmq_id: job.id as string,
+      })
+      .select()
+      .single();
+
+    if (error || !jobsRow) {
+      throw new Error(`Failed to insert render job into DB: ${error?.message}`);
+    }
+
+    return { jobId: jobsRow.id };
   }
 
   async enqueueAnalysis(projectId: string, videoUrl: string) {
@@ -52,33 +85,82 @@ export class JobsService {
       },
     );
 
+    const supabase = this.supabaseService.getServiceRoleClient();
+    const { data: jobsRow, error } = await supabase
+      .from('jobs')
+      .insert({
+        project_id: projectId,
+        type: 'transcription',
+        status: 'queued',
+        progress: 0,
+        bullmq_id: transcriptionJob.id as string,
+      })
+      .select()
+      .single();
+
+    if (error || !jobsRow) {
+      throw new Error(`Failed to insert analysis job into DB: ${error?.message}`);
+    }
+
     return {
-      jobId: transcriptionJob.id,
+      jobId: jobsRow.id,
       message: 'Transcription job queued. Clip analysis will start automatically.',
     };
   }
 
   async getJob(jobId: string): Promise<JobStatusDto> {
-    // Search all 3 queues
-    const queues = [this.transcriptionQueue, this.clipAnalysisQueue, this.renderQueue];
+    const supabase = this.supabaseService.getServiceRoleClient();
+    const { data: row, error } = await supabase
+      .from('jobs')
+      .select('*')
+      .eq('id', jobId)
+      .single();
 
-    for (const queue of queues) {
-      const job = await queue.getJob(jobId);
-      if (job) {
-        return this.mapJobToStatus(job);
+    if (error || !row) {
+      throw new Error(`Job ${jobId} not found`);
+    }
+
+    const jobsRow = row as JobsRow;
+
+    // If queued or active, check BullMQ for real-time progress
+    if (jobsRow.status === 'queued' || jobsRow.status === 'active') {
+      const queues = [this.transcriptionQueue, this.clipAnalysisQueue, this.renderQueue];
+      for (const queue of queues) {
+        const bullJob = await queue.getJob(jobsRow.bullmq_id);
+        if (bullJob) {
+          const bullState = await bullJob.getState();
+          const bullProgress = bullJob.progress || 0;
+          let bullStatus = jobsRow.status;
+          if (bullState === 'completed') bullStatus = 'completed';
+          else if (bullState === 'failed') bullStatus = 'failed';
+          else if (bullState === 'active') bullStatus = 'active';
+
+          return {
+            jobId: jobsRow.id,
+            status: bullStatus.toUpperCase(),
+            progress: typeof bullProgress === 'number' ? bullProgress : 0,
+            returnvalue: bullJob.returnvalue ?? jobsRow.result ?? undefined,
+            failedReason: bullJob.failedReason ?? undefined,
+          };
+        }
       }
     }
 
-    // Fallback to cache
-    const cached = this.progressCache.get(jobId);
-    if (cached) return cached;
-
-    throw new Error(`Job ${jobId} not found`);
+    // Fallback to DB row
+    const result = typeof jobsRow.result === 'string' ? JSON.parse(jobsRow.result) : jobsRow.result;
+    return {
+      jobId: jobsRow.id,
+      status: jobsRow.status.toUpperCase(),
+      progress: jobsRow.progress,
+      returnvalue: result ?? undefined,
+    };
   }
 
   getJobProgress(jobId: string): JobStatusDto {
     const cached = this.progressCache.get(jobId);
     if (cached) return cached;
+
+    // Cache miss — return pending status (async read from DB not possible in sync context)
     return {
       jobId,
       status: 'QUEUED',
@@ -87,25 +169,38 @@ export class JobsService {
   }
 
   async updateJobProgress(jobId: string, status: JobStatusDto): Promise<void> {
+    // Write-through cache
     this.progressCache.set(jobId, status);
-  }
 
-  private async mapJobToStatus(job: any): Promise<JobStatusDto> {
-    const state = await job.getState();
-    const progress = job.progress || 0;
-    let status: string = 'QUEUED';
-    if (state === 'completed') status = 'COMPLETED';
-    else if (state === 'failed') status = 'FAILED';
-    else if (state === 'active') status = 'PROCESSING';
-    else if (state === 'waiting') status = 'QUEUED';
-    else if (state === 'delayed') status = 'QUEUED';
-
-    return {
-      jobId: job.id as string,
-      status,
-      progress: typeof progress === 'number' ? progress : 0,
-      returnvalue: job.returnvalue,
-      failedReason: job.failedReason,
+    // Update DB
+    const supabase = this.supabaseService.getServiceRoleClient();
+    const updates: Partial<{
+      status: string;
+      progress: number;
+      result: any;
+      updated_at: string;
+    }> = {
+      progress: status.progress,
     };
+
+    if (status.returnvalue !== undefined) {
+      updates.result = status.returnvalue;
+    }
+
+    if (status.status) {
+      updates.status = status.status.toLowerCase();
+    }
+
+    const { error } = await supabase
+      .from('jobs')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', jobId);
+
+    if (error) {
+      console.error(`Failed to update job ${jobId} in DB: ${error.message}`);
+    }
   }
 }

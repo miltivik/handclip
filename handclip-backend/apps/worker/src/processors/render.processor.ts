@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { createClient } from '@supabase/supabase-js';
+import { SupabaseService } from '../modules/supabase/supabase.service';
 import { incrementExportCount } from '../providers/export-counter';
 
 const execAsync = promisify(exec);
@@ -22,6 +22,7 @@ interface RenderJobData {
   musicFadeIn?: number;
   musicFadeOut?: number;
   preset: 'tiktok' | 'reels' | 'shorts' | 'draft' | 'hq';
+  clipId?: string;
 }
 
 interface SubtitleSegment {
@@ -42,9 +43,49 @@ const PRESETS = {
 
 @Processor('render')
 export class RenderProcessor extends WorkerHost {
+  constructor(private readonly supabaseService: SupabaseService) {
+    super();
+  }
+
   async process(job: Job<RenderJobData>): Promise<{ outputUrl: string }> {
-    const { projectId, userId, videoUrl, trimStart, trimEnd, subtitles, musicUrl, musicVolume, musicFadeIn, musicFadeOut, preset } = job.data;
+    const { projectId, userId, videoUrl, trimStart, trimEnd, subtitles, musicUrl, musicVolume, musicFadeIn, musicFadeOut, preset, clipId } = job.data;
     const config = PRESETS[preset] || PRESETS.tiktok;
+    const supabase = this.supabaseService.getServiceRoleClient();
+
+    // Create job record in DB
+    const { data: jobRecord, error: jobCreateError } = await supabase
+      .from('jobs')
+      .insert({
+        project_id: projectId,
+        type: 'render',
+        status: 'active',
+        progress: 5,
+        bullmq_id: job.id,
+      })
+      .select('id')
+      .single();
+
+    if (jobCreateError) {
+      console.error(`[Render] Failed to create job record: ${jobCreateError.message}`);
+    }
+    const dbJobId = jobRecord?.id;
+
+    // Create export record in DB
+    const { data: exportRecord, error: exportCreateError } = await supabase
+      .from('exports')
+      .insert({
+        project_id: projectId,
+        clip_id: clipId || null,
+        preset,
+        status: 'rendering',
+      })
+      .select('id')
+      .single();
+
+    if (exportCreateError) {
+      console.error(`[Render] Failed to create export record: ${exportCreateError.message}`);
+    }
+    const dbExportId = exportRecord?.id;
 
     const tempDir = os.tmpdir();
     const musicPath = musicUrl ? path.join(tempDir, `${projectId}-music.mp3`) : null;
@@ -53,10 +94,20 @@ export class RenderProcessor extends WorkerHost {
     const srtPath = path.join(tempDir, `${projectId}-subs.srt`);
 
     // Check export limit for free tier (3/month)
-    const { allowed, count } = await incrementExportCount(userId);
-    if (!allowed) throw new Error(`Límite de exports alcanzado (${count}/3 este mes). Actualiza a Pro.`);
+    const { allowed, count } = await incrementExportCount(userId, supabase);
+    if (!allowed) {
+      const err = new Error(`Límite de exports alcanzado (${count}/3 este mes). Actualiza a Pro.`);
+      if (dbJobId) {
+        await supabase.from('jobs').update({ status: 'failed', result: { error: err.message }, updated_at: new Date().toISOString() }).eq('id', dbJobId);
+      }
+      if (dbExportId) {
+        await supabase.from('exports').update({ status: 'failed' }).eq('id', dbExportId);
+      }
+      throw err;
+    }
 
     try {
+      if (dbJobId) await supabase.from('jobs').update({ progress: 5 }).eq('id', dbJobId);
       await job.updateProgress(5);
 
       // Step 1: Download video
@@ -67,6 +118,7 @@ export class RenderProcessor extends WorkerHost {
         fs.copyFileSync(videoUrl, inputPath);
       }
 
+      if (dbJobId) await supabase.from('jobs').update({ progress: 15 }).eq('id', dbJobId);
       await job.updateProgress(15);
 
       // Step 2: Generate SRT subtitle file
@@ -81,6 +133,7 @@ export class RenderProcessor extends WorkerHost {
         fs.writeFileSync(musicPath, Buffer.from(await res.arrayBuffer()));
       }
 
+      if (dbJobId) await supabase.from('jobs').update({ progress: 25 }).eq('id', dbJobId);
       await job.updateProgress(25);
 
       // Step 4: Build FFmpeg command
@@ -97,21 +150,21 @@ export class RenderProcessor extends WorkerHost {
         outputPath,
       });
 
+      if (dbJobId) await supabase.from('jobs').update({ progress: 30 }).eq('id', dbJobId);
       await job.updateProgress(30);
       console.log(`[Render] FFmpeg: ${cmd}`);
 
       // Step 5: Execute FFmpeg
       await execAsync(cmd, { timeout: 300000 }); // 5 min timeout
 
+      if (dbJobId) await supabase.from('jobs').update({ progress: 90 }).eq('id', dbJobId);
       await job.updateProgress(90);
-      // Step 6: Upload to Supabase Storage
-      const supabase = createClient(
-        process.env.SUPABASE_URL || '',
-        process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-      );
 
+      // Step 6: Upload to Supabase Storage
       const storagePath = `${projectId}/${preset}/output.mp4`;
       const fileBuffer = fs.readFileSync(outputPath);
+      const fileSize = fileBuffer.length;
+
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('exports')
         .upload(storagePath, fileBuffer, {
@@ -128,16 +181,86 @@ export class RenderProcessor extends WorkerHost {
 
       const outputUrl = signedData?.signedUrl || storagePath;
 
+      // Get video duration for export record
+      let duration: number | null = null;
+      try {
+        const { stdout } = await execAsync(
+          `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${outputPath}"`
+        );
+        duration = parseFloat(stdout.trim()) || null;
+      } catch {
+        duration = trimEnd - trimStart; // fallback
+      }
+
+      // Update export record
+      if (dbExportId) {
+        await supabase
+          .from('exports')
+          .update({
+            status: 'completed',
+            output_url: outputUrl,
+            file_size: fileSize,
+            duration,
+            completed_at: new Date().toISOString(),
+          })
+          .eq('id', dbExportId);
+      }
+
+      // Update clip status if clipId provided
+      if (clipId) {
+        await supabase
+          .from('clips')
+          .update({ status: 'exported', user_edited: true })
+          .eq('id', clipId);
+      }
+
+      // Mark job as completed
+      if (dbJobId) {
+        await supabase
+          .from('jobs')
+          .update({
+            status: 'completed',
+            progress: 100,
+            result: { output_url: outputUrl, export_id: dbExportId },
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', dbJobId);
+      }
+
       await job.updateProgress(100);
       console.log(`[Render] Completed for project ${projectId}`);
 
       return { outputUrl };
+    } catch (err: any) {
+      console.error(`[Render] Failed for project ${projectId}: ${err.message}`);
+
+      // Mark job as failed
+      if (dbJobId) {
+        await supabase
+          .from('jobs')
+          .update({
+            status: 'failed',
+            progress: 0,
+            result: { error: err.message },
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', dbJobId);
+      }
+
+      // Mark export as failed
+      if (dbExportId) {
+        await supabase
+          .from('exports')
+          .update({ status: 'failed' })
+          .eq('id', dbExportId);
+      }
+
+      throw err;
     } finally {
       // Cleanup temp files
-      for (const f of [inputPath, srtPath, musicPath]) {
+      for (const f of [inputPath, srtPath, musicPath, outputPath]) {
         if (f) try { fs.unlinkSync(f); } catch {}
       }
-      // Keep output file — it gets uploaded or served
     }
   }
 
@@ -187,7 +310,6 @@ export class RenderProcessor extends WorkerHost {
 
     // Subtitle overlay
     if (srtPath) {
-      // Linux: FFmpeg subtitles filter with single-quoted path (no escaping needed)
       videoFilters.push(`subtitles='${srtPath}':force_style='Fontname=Arial,Fontsize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=40'`);
     }
 

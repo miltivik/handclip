@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { api } from '../services/api';
+import { validateVideoFile } from '../lib/validation';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -27,18 +28,47 @@ export default function HomeScreen() {
 
     const asset = result.assets[0];
     const fileName = asset.uri.split('/').pop() || `video_${Date.now()}.mp4`;
+    const fileSize = asset.fileSize ?? 0;
+    const duration = asset.duration ?? 0;
+
+    // Validate before uploading
+    const validation = validateVideoFile(fileName, fileSize, duration);
+    if (!validation.valid) {
+      Alert.alert('Video no válido', validation.error);
+      return;
+    }
 
     setLoading(true);
     setError(null);
 
     try {
-      // 1. Subir video al backend (obtiene projectId y videoUrl)
-      const { projectId, videoUrl } = await api.uploadVideo(asset.uri, fileName);
+      // 1. Upload with chunked upload to get videoUrl
+      const { videoUrl } = await api.uploadVideoFile({
+        uri: asset.uri,
+        fileName,
+        mimeType: 'video/mp4',
+        fileSize,
+      });
 
-      // 2. Navegar a processing con los datos del proyecto
+      // 2. Create project with the uploaded video URL
+      const { projectId } = await api.createProject({
+        name: fileName.replace(/\.[^/.]+$/, ''),
+        sourceVideoUrl: videoUrl,
+        duration: Math.round(duration),
+        width: asset.width ?? 0,
+        height: asset.height ?? 0,
+      });
+
+      // 3. Navigate to processing with real metadata
       router.push({
         pathname: '/import/processing',
-        params: { projectId, videoUrl: encodeURIComponent(videoUrl) },
+        params: {
+          projectId,
+          videoUrl: encodeURIComponent(videoUrl),
+          duration: String(Math.round(duration)),
+          width: String(asset.width ?? 0),
+          height: String(asset.height ?? 0),
+        },
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al subir el video');

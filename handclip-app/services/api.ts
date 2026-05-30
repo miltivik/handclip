@@ -30,6 +30,14 @@ export interface ClipCandidate {
   selected?: boolean;
 }
 
+export interface SubtitleSegment {
+  id: string;
+  text: string;
+  startTime: number;
+  endTime: number;
+  words?: { word: string; start: number; end: number; probability: number }[];
+}
+
 export interface AnalyzeResponse {
   jobId: string;
 }
@@ -86,6 +94,15 @@ export const api = {
   // Projects
   // =============================================================================
 
+  createProject: (body: {
+    name: string;
+    sourceVideoUrl: string;
+    duration?: number;
+    width?: number;
+    height?: number;
+  }) =>
+    post<{ projectId: string }>('/projects', body),
+
   uploadVideo: async (fileUri: string, fileName: string): Promise<UploadResponse> => {
     const formData = new FormData();
     formData.append('video', {
@@ -118,6 +135,11 @@ export const api = {
   // Clips
   // =============================================================================
 
+  getSubtitles: (projectId: string, clipId?: string) =>
+    get<{ segments: SubtitleSegment[] }>(
+      `/projects/${projectId}/subtitles${clipId ? `?clipId=${clipId}` : ''}`,
+    ),
+
   getClips: (projectId: string) => get<ClipCandidate[]>(`/projects/${projectId}/clips`),
 
   selectClip: (projectId: string, clipId: string, selected: boolean) =>
@@ -144,6 +166,56 @@ export const api = {
 
   getExportJob: (projectId: string, jobId: string) =>
     get<JobProgress>(`/projects/${projectId}/export/${jobId}`),
+
+  // ============================================================================
+  // Chunked Upload
+  // ============================================================================
+
+  initUpload: (fileName: string, fileSize: number, mimeType: string) =>
+    post<{ uploadId: string }>('/uploads/init', { fileName, fileSize, mimeType }),
+
+  uploadChunk: (uploadId: string, chunkIndex: number, chunk: Blob) => {
+    const formData = new FormData();
+    formData.append('chunk', chunk);
+    formData.append('chunkIndex', String(chunkIndex));
+    return post<{ received: number; total: number }>(`/uploads/${uploadId}/chunk`, formData, true);
+  },
+
+  completeUpload: (uploadId: string) =>
+    post<{ videoUrl: string }>(`/uploads/${uploadId}/complete`, {}),
+  uploadVideoFile: async (file: {
+    uri: string;
+    fileName?: string;
+    mimeType?: string;
+    fileSize?: number;
+  }): Promise<{ videoUrl: string }> => {
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+
+    // 1. Fetch file as ArrayBuffer
+    const response = await fetch(file.uri);
+    if (!response.ok) throw new Error('No se pudo leer el archivo');
+    const arrayBuffer = await response.arrayBuffer();
+
+    const fileSize = file.fileSize ?? arrayBuffer.byteLength;
+    const fileName = file.fileName ?? `video_${Date.now()}.mp4`;
+    const mimeType = file.mimeType ?? 'video/mp4';
+
+    // 2. Init upload
+    const { uploadId } = await api.initUpload(fileName, fileSize, mimeType);
+
+    // 3. Split into chunks and upload sequentially
+    const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, fileSize);
+      const chunk = arrayBuffer.slice(start, end);
+      await api.uploadChunk(uploadId, i, new Blob([chunk], { type: mimeType }));
+    }
+
+    // 4. Complete upload
+    const { videoUrl } = await api.completeUpload(uploadId);
+    return { videoUrl };
+  },
 };
 
 // =============================================================================

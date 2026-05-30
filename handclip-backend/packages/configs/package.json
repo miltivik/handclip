@@ -5,7 +5,7 @@
   "main": "tsconfig.base.json",
   "files": ["tsconfig.base.json"],
   "scripts": {
-    "build": "tsc --build",
+    "build": "echo 'configs built'",
     "clean": "rm -rf dist tsconfig.tsbuildinfo"
   }
 }

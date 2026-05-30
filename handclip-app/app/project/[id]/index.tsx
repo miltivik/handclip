@@ -1,34 +1,64 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { View, FlatList, StyleSheet, Text } from 'react-native';
+import { View, FlatList, StyleSheet, Text, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { useEffect } from 'react';
 import CandidateCard from '../../../components/clips/CandidateCard';
+import EmptyState from '../../../components/ui/EmptyState';
 import { useProjectStore } from '../../../stores/project.store';
 import { ClipCandidate } from '../../../services/api';
-
-const DEMO_CANDIDATES: ClipCandidate[] = [
-  {
-    id: 'demo-1',
-    startTime: 15,
-    endTime: 27,
-    duration: 12,
-    confidenceScore: 92,
-    reasons: ['high_energy', 'emotional_peak'],
-    suggestedCaption: 'Demo clip — reemplazar con datos reales',
-  },
-];
 
 export default function ProjectScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { clips, fetchClips, isLoading } = useProjectStore();
+  const { clips, fetchClips, fetchProject, isLoading, error } = useProjectStore();
 
   useEffect(() => {
     if (id) {
+      fetchProject(id);
       fetchClips(id);
     }
-  }, [id, fetchClips]);
+  }, [id, fetchProject, fetchClips]);
 
-  const displayClips = clips.length > 0 ? clips : DEMO_CANDIDATES;
+  const handleRetry = () => {
+    if (id) {
+      fetchProject(id);
+      fetchClips(id);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={styles.loadingText}>Cargando clips...</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.centerContainer}>
+        <EmptyState
+          icon="alert-circle-outline"
+          title="Error al cargar"
+          subtitle={error}
+          ctaLabel="Reintentar"
+          onCtaPress={handleRetry}
+        />
+      </View>
+    );
+  }
+
+  if (clips.length === 0) {
+    return (
+      <View style={styles.centerContainer}>
+        <EmptyState
+          icon="film-outline"
+          title="Sin clips candidatos"
+          subtitle="La IA no encontró momentos destacados. Intenta con otro video."
+        />
+      </View>
+    );
+  }
 
   const handleEdit = (candidateId: string) => {
     router.push(`/project/${id}/edit?clipId=${candidateId}`);
@@ -46,12 +76,12 @@ export default function ProjectScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Candidatos</Text>
         <Text style={styles.subtitle}>
-          {isLoading ? 'Cargando clips...' : `${displayClips.length} clips encontrados`}
+          {clips.length} clips encontrados
         </Text>
       </View>
 
       <FlatList
-        data={displayClips}
+        data={clips}
         renderItem={renderItem}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
@@ -65,6 +95,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  centerContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   header: {
     padding: 16,
@@ -83,5 +119,10 @@ const styles = StyleSheet.create({
   },
   list: {
     padding: 16,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#666',
   },
 });

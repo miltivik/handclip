@@ -10,9 +10,9 @@ interface Subtitle {
 interface PreviewProps {
   videoUri: string;
   subtitles: Subtitle[];
+  currentTime?: number;
 }
-
-export default function Preview({ videoUri, subtitles }: PreviewProps) {
+export default function Preview({ videoUri, subtitles, currentTime = 0 }: PreviewProps) {
   const isPlaceholder = !videoUri || videoUri === 'placeholder';
 
   return (
@@ -30,7 +30,7 @@ export default function Preview({ videoUri, subtitles }: PreviewProps) {
       {subtitles.length > 0 && (
         <SubtitleOverlay
           subtitles={subtitles}
-          currentTime={0}
+          currentTime={currentTime}
         />
       )}
     </View>

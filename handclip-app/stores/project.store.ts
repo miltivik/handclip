@@ -1,12 +1,22 @@
 import { create } from 'zustand';
 import { api, Project, ClipCandidate } from '../services/api';
 
+export interface SubtitleSegment {
+  id: string;
+  text: string;
+  startTime: number;
+  endTime: number;
+  words?: { word: string; start: number; end: number; probability: number }[];
+}
+
 interface ProjectState {
   currentProject: Project | null;
   clips: ClipCandidate[];
   selectedClipId: string | null;
   isLoading: boolean;
   error: string | null;
+  subtitles: SubtitleSegment[];
+  subtitlesLoading: boolean;
 
   // Actions
   setProject: (project: Project) => void;
@@ -15,6 +25,7 @@ interface ProjectState {
   clearProject: () => void;
   fetchProject: (projectId: string) => Promise<void>;
   fetchClips: (projectId: string) => Promise<void>;
+  fetchSubtitles: (projectId: string, clipId: string) => Promise<void>;
   toggleClipSelection: (projectId: string, clipId: string, selected: boolean) => Promise<void>;
 }
 
@@ -24,6 +35,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   selectedClipId: null,
   isLoading: false,
   error: null,
+  subtitles: [],
+  subtitlesLoading: false,
 
   setProject: (project) => set({ currentProject: project }),
 
@@ -32,7 +45,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   selectClip: (clipId) => set({ selectedClipId: clipId }),
 
   clearProject: () =>
-    set({ currentProject: null, clips: [], selectedClipId: null }),
+    set({ currentProject: null, clips: [], selectedClipId: null, subtitles: [] }),
 
   fetchProject: async (projectId: string) => {
     set({ isLoading: true, error: null });
@@ -51,6 +64,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       set({ clips, isLoading: false });
     } catch (err: any) {
       set({ error: err?.message || 'Error loading clips', isLoading: false });
+    }
+  },
+
+  fetchSubtitles: async (projectId: string, clipId: string) => {
+    set({ subtitlesLoading: true, error: null });
+    try {
+      const subtitles = await api.getSubtitles(projectId, clipId);
+      set({ subtitles, subtitlesLoading: false });
+    } catch (err: any) {
+      set({ error: err?.message || 'Error loading subtitles', subtitlesLoading: false });
     }
   },
 

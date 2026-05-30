@@ -26,16 +26,28 @@ export const MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024;
 export class ProjectsService {
   constructor(private readonly supabaseService: SupabaseService) {}
 
-  async create(name: string, description?: string): Promise<Project> {
+  async create(params: {
+    name: string;
+    description?: string;
+    sourceVideoUrl?: string;
+    duration?: number;
+    width?: number;
+    height?: number;
+  }): Promise<Project> {
     const client = this.supabaseService.getClient();
     const user = await this.getCurrentUser();
 
     const { data, error } = await client
       .from('projects')
       .insert({
-        name,
-        description,
+        title: params.name,
         user_id: user?.id || 'anonymous',
+        source_video_url: params.sourceVideoUrl || null,
+        source_duration: params.duration || null,
+        metadata: params.width && params.height
+          ? { width: params.width, height: params.height }
+          : null,
+        status: 'uploading',
       })
       .select()
       .single();
@@ -171,7 +183,7 @@ export class ProjectsService {
     const userId = user?.id || 'anonymous';
 
     // Crear proyecto primero para obtener el ID
-    const project = await this.create(name);
+    const project = await this.create({ name });
 
     // Subir video
     const { videoUrl } = await this.uploadVideo(file, userId, project.id);
