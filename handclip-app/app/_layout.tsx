@@ -25,6 +25,7 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="import" options={{ headerShown: false }} />
           <Stack.Screen name="project" options={{ headerShown: false }} />
+          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         </Stack>
       </AuthProvider>
     </SafeAreaProvider>

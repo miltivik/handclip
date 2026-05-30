@@ -1,13 +1,21 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { View, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
 import { VideoView } from 'expo-video';
 import Preview from '../../../components/editor/Preview';
 import Timeline from '../../../components/editor/Timeline';
+import SubtitleOverlay from '../../../components/editor/SubtitleOverlay';
+import SubtitleEditor from '../../../components/editor/SubtitleEditor';
 import { useEditorStore } from '../../../stores/editor.store';
 import { useProjectStore } from '../../../stores/project.store';
 import { useAppVideoPlayer } from '../../../hooks/useVideoPlayer';
 import { api } from '../../../services/api';
+interface EditingSubtitle {
+  index: number;
+  text: string;
+  startTime: number;
+  endTime: number;
+}
 
 export default function EditScreen() {
   const { id, clipId } = useLocalSearchParams<{ id: string; clipId: string }>();
@@ -20,7 +28,9 @@ export default function EditScreen() {
     preset,
     setTrimStart,
     setTrimEnd,
+    setSubtitles,
   } = useEditorStore();
+  const [editingSubtitle, setEditingSubtitle] = useState<EditingSubtitle | null>(null);
 
   const {
     currentProject,
@@ -83,7 +93,21 @@ export default function EditScreen() {
       Alert.alert('Error al iniciar exportación', err instanceof Error ? err.message : 'Error desconocido');
     }
   };
-
+  const handleSubtitleTap = (index: number, text: string, startTime: number, endTime: number) => {
+    setEditingSubtitle({ index, text, startTime, endTime });
+  };
+  const handleSubtitleSave = (newText: string) => {
+    if (!editingSubtitle) return;
+    const updated = [...subtitles];
+    if (updated[editingSubtitle.index]) {
+      updated[editingSubtitle.index] = { ...updated[editingSubtitle.index], text: newText };
+      setSubtitles(updated);
+    }
+    setEditingSubtitle(null);
+  };
+  const handleSubtitleCancel = () => {
+    setEditingSubtitle(null);
+  };
   const displaySubtitles = subtitles.length > 0 ? subtitles : projectSubtitles;
 
   return (
@@ -103,7 +127,23 @@ export default function EditScreen() {
             currentTime={currentTime}
           />
         )}
+        <SubtitleOverlay
+          subtitles={displaySubtitles}
+          currentTime={currentTime}
+          position="bottom"
+          onSubtitleTap={handleSubtitleTap}
+        />
       </View>
+      {editingSubtitle && (
+        <SubtitleEditor
+          visible={true}
+          initialText={editingSubtitle.text}
+          startTime={editingSubtitle.startTime}
+          endTime={editingSubtitle.endTime}
+          onSave={handleSubtitleSave}
+          onCancel={handleSubtitleCancel}
+        />
+      )}
 
       <View style={styles.timelineContainer}>
         <Timeline

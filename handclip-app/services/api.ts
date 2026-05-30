@@ -6,36 +6,29 @@ const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
 
 export interface Project {
   id: string;
+  user_id: string;
   name: string;
-  description?: string;
-  userId: string;
-  status?: string;
-  sourceVideoUrl?: string;
-  duration?: number;
-  createdAt: string;
-  updatedAt: string;
+  video_url: string;
+  thumbnail_url: string | null;
+  duration: number | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ClipCandidate {
   id: string;
-  startTime: number;
-  endTime: number;
-  duration?: number;
-  confidenceScore: number;
-  reasons: string[];
-  suggestedCaption: string;
-  transcriptSnippet?: string;
-  moodTags?: string[];
-  platformTargets?: string[];
-  selected?: boolean;
+  project_id: string;
+  start_time: number;
+  end_time: number;
+  score: number;
+  thumbnail_url: string | null;
+  created_at: string;
 }
 
 export interface SubtitleSegment {
-  id: string;
+  start: number;
+  end: number;
   text: string;
-  startTime: number;
-  endTime: number;
-  words?: { word: string; start: number; end: number; probability: number }[];
 }
 
 export interface AnalyzeResponse {
@@ -43,19 +36,17 @@ export interface AnalyzeResponse {
 }
 
 export interface UploadResponse {
-  projectId: string;
-  videoUrl: string;
+  url: string;
+  path: string;
 }
 
 export interface JobProgress {
   jobId: string;
-  type: string;
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  status: 'QUEUED' | 'ACTIVE' | 'Completed' | 'Failed' | 'COMPLETED' | 'FAILED';
   progress: number;
-  result?: {
-    clips?: ClipCandidate[];
-    outputUrl?: string;
-  };
+  returnvalue?: Record<string, unknown>;
+  failedReason?: string;
+  result?: Record<string, unknown>;
 }
 
 // =============================================================================
@@ -63,20 +54,40 @@ export interface JobProgress {
 // =============================================================================
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  const url = `${API_BASE}${path}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(await authHeaders()),
+    },
+  });
+  if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
 }
 
-async function post<T>(path: string, body: Record<string, unknown> | FormData, multipart = false): Promise<T> {
-  const bodyInit: BodyInit = multipart ? (body as FormData) : JSON.stringify(body);
-  const res = await fetch(`${API_BASE}${path}`, {
+async function post<T>(
+  path: string,
+  body: Record<string, unknown> | FormData,
+  multipart = false,
+): Promise<T> {
+  const url = `${API_BASE}${path}`;
+  const res = await fetch(url, {
     method: 'POST',
-    headers: multipart ? {} : { 'Content-Type': 'application/json' },
-    body: bodyInit,
+    headers: {
+      ...(multipart ? {} : { 'Content-Type': 'application/json' }),
+      ...(await authHeaders()),
+    },
+    body: multipart ? (body as FormData) : JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  if (!res.ok) throw new Error(`POST ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const { data } = await import('./supabase').then((m) => m.supabase.auth.getSession());
+  const token = data.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 // =============================================================================
@@ -84,137 +95,67 @@ async function post<T>(path: string, body: Record<string, unknown> | FormData, m
 // =============================================================================
 
 export const api = {
-  login: (email: string) =>
-    post<{ token: string }>('/auth/login', { email }),
+  // ---- Auth ----
+  signIn: (email: string, password: string) =>
+    post<{ userId: string }>('/auth/signin', { email, password }),
 
-  verify: (token: string, email: string) =>
-    post<{ userId: string }>('/auth/verify', { token, email }),
+  signUp: (email: string, password: string) =>
+    post<{ userId: string }>('/auth/signup', { email, password }),
 
-  // =============================================================================
-  // Projects
-  // =============================================================================
+  signOut: () => post<{ success: boolean }>('/auth/signout', {}),
 
-  createProject: (body: {
-    name: string;
-    sourceVideoUrl: string;
-    duration?: number;
-    width?: number;
-    height?: number;
-  }) =>
-    post<{ projectId: string }>('/projects', body),
+  getSession: () => get<{ userId: string }>('/auth/session'),
 
-  uploadVideo: async (fileUri: string, fileName: string): Promise<UploadResponse> => {
-    const formData = new FormData();
-    formData.append('video', {
-      uri: fileUri,
-      name: fileName,
-      type: 'video/mp4',
-    } as unknown as Blob);
-    formData.append('name', fileName.replace(/\.[^/.]+$/, ''));
-    return post<UploadResponse>('/projects/upload', formData, true);
-  },
-
-  getProject: (id: string) => get<Project>(`/projects/${id}`),
-
+  // ---- Projects ----
   getProjects: () => get<Project[]>('/projects'),
 
-  // =============================================================================
-  // Analysis
-  // =============================================================================
+  getProject: (projectId: string) => get<Project>(`/projects/${projectId}`),
 
+  createProject: (name: string, videoUrl: string) =>
+    post<Project>('/projects', { name, video_url: videoUrl }),
+
+  deleteProject: (projectId: string) =>
+    post<{ success: boolean }>(`/projects/${projectId}`, { _method: 'DELETE' }),
+
+  // ---- Clips ----
+  getClips: (projectId: string) =>
+    get<ClipCandidate[]>(`/projects/${projectId}/clips`),
+  createManualClip: (projectId: string, startTime: number, endTime: number) =>
+    post<{ clipId: string }>(`/projects/${projectId}/clips/manual`, { startTime, endTime }),
+  // ---- Analysis ----
   analyze: (projectId: string, videoUrl: string) =>
     post<AnalyzeResponse>(`/projects/${projectId}/analyze`, { videoUrl }),
+  // ---- Uploads ----
+  getUploadUrl: (filename: string, contentType: string) =>
+    post<UploadResponse>('/uploads/url', { filename, content_type: contentType }),
 
-  // =============================================================================
-  // Jobs
-  // =============================================================================
+  uploadFile: async (file: { uri: string; name: string; type: string }) => {
+    // 1. Get signed URL
+    const { url, path } = await api.getUploadUrl(file.name, file.type);
 
-  getJob: (jobId: string) => get<JobProgress>(`/jobs/${jobId}`),
+    // 2. PUT file to storage
+    const res = await fetch(url, {
+      method: 'PUT',
+      body: await (await fetch(file.uri)).blob(),
+      headers: { 'Content-Type': file.type },
+    });
+    if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
 
-  // =============================================================================
-  // Clips
-  // =============================================================================
-
-  getSubtitles: (projectId: string, clipId?: string) =>
-    get<{ segments: SubtitleSegment[] }>(
-      `/projects/${projectId}/subtitles${clipId ? `?clipId=${clipId}` : ''}`,
-    ),
-
-  getClips: (projectId: string) => get<ClipCandidate[]>(`/projects/${projectId}/clips`),
-
-  selectClip: (projectId: string, clipId: string, selected: boolean) =>
-    post(`/projects/${projectId}/clips/${clipId}/select`, { selected }),
-
-  // ============================================================================
-  // Export
-  // ============================================================================
-
-  exportClip: (
-    projectId: string,
-    body: {
-      clipId: string;
-      trimStart: number;
-      trimEnd: number;
-      subtitles: { id: string; text: string; startTime: number; endTime: number }[];
-      musicUrl?: string;
-      musicVolume?: number;
-      musicFadeIn?: number;
-      musicFadeOut?: number;
-      preset: 'tiktok' | 'reels' | 'shorts' | 'draft' | 'hq';
-    },
-  ) => post<{ jobId: string }>(`/projects/${projectId}/export`, body),
-
-  getExportJob: (projectId: string, jobId: string) =>
-    get<JobProgress>(`/projects/${projectId}/export/${jobId}`),
-
-  // ============================================================================
-  // Chunked Upload
-  // ============================================================================
-
-  initUpload: (fileName: string, fileSize: number, mimeType: string) =>
-    post<{ uploadId: string }>('/uploads/init', { fileName, fileSize, mimeType }),
-
-  uploadChunk: (uploadId: string, chunkIndex: number, chunk: Blob) => {
-    const formData = new FormData();
-    formData.append('chunk', chunk);
-    formData.append('chunkIndex', String(chunkIndex));
-    return post<{ received: number; total: number }>(`/uploads/${uploadId}/chunk`, formData, true);
+    return { url: path };
   },
 
-  completeUpload: (uploadId: string) =>
-    post<{ videoUrl: string }>(`/uploads/${uploadId}/complete`, {}),
-  uploadVideoFile: async (file: {
-    uri: string;
-    fileName?: string;
-    mimeType?: string;
-    fileSize?: number;
-  }): Promise<{ videoUrl: string }> => {
-    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+  // ---- Health ----
+  checkHealth: () =>
+    get<{ status: string; timestamp: string; checks: Record<string, string> }>('/health'),
 
-    // 1. Fetch file as ArrayBuffer
-    const response = await fetch(file.uri);
-    if (!response.ok) throw new Error('No se pudo leer el archivo');
-    const arrayBuffer = await response.arrayBuffer();
-
-    const fileSize = file.fileSize ?? arrayBuffer.byteLength;
-    const fileName = file.fileName ?? `video_${Date.now()}.mp4`;
-    const mimeType = file.mimeType ?? 'video/mp4';
-
-    // 2. Init upload
-    const { uploadId } = await api.initUpload(fileName, fileSize, mimeType);
-
-    // 3. Split into chunks and upload sequentially
-    const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, fileSize);
-      const chunk = arrayBuffer.slice(start, end);
-      await api.uploadChunk(uploadId, i, new Blob([chunk], { type: mimeType }));
-    }
-
-    // 4. Complete upload
-    const { videoUrl } = await api.completeUpload(uploadId);
-    return { videoUrl };
+  // ---- Auth store helpers (delegated) ----
+  auth: {
+    setSession: (accessToken: string, refreshToken: string) =>
+      import('./supabase').then((m) =>
+        m.supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken }),
+      ),
+    getAccessToken: () =>
+      import('./supabase').then((m) => m.supabase.auth.getSession()).then((r) => r.data.session?.access_token),
   },
 };
 
@@ -228,6 +169,46 @@ export function subscribeJobProgress(
   onComplete: (result?: Record<string, unknown>) => void,
   onError?: (error: Error) => void,
 ): () => void {
+  const baseUrl = API_BASE.replace('/api', '');
+  const url = `${baseUrl}/jobs/${jobId}/progress`;
+
+  // Try EventSource first (works in browser/React Native with polyfill)
+  let eventSource: EventSource | null = null;
+  let useEventSource = true;
+
+  try {
+    eventSource = new EventSource(url);
+  } catch {
+    useEventSource = false;
+  }
+
+  if (useEventSource && eventSource) {
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as JobProgress;
+        onProgress(data);
+        if (data.status === 'COMPLETED') {
+          onComplete(data.result ?? data.returnvalue);
+          eventSource?.close();
+        } else if (data.status === 'FAILED') {
+          onError?.(new Error(data.failedReason ?? 'Processing failed'));
+          eventSource?.close();
+        }
+      } catch {
+        // ignore parse errors
+      }
+    };
+
+    eventSource.onerror = () => {
+      // Fallback to polling if EventSource fails
+      eventSource?.close();
+      startPolling();
+    };
+
+    return () => eventSource?.close();
+  }
+
+  // Polling fallback
   let active = true;
   let failures = 0;
   const MAX_FAILURES = 3;
@@ -241,10 +222,10 @@ export function subscribeJobProgress(
 
       if (data.status === 'COMPLETED') {
         active = false;
-        onComplete(data.result);
+        onComplete(data.result ?? data.returnvalue);
       } else if (data.status === 'FAILED') {
         active = false;
-        onError?.(new Error('El procesamiento del video falló'));
+        onError?.(new Error(data.failedReason ?? 'Processing failed'));
       }
     } catch {
       failures++;
@@ -255,9 +236,17 @@ export function subscribeJobProgress(
     }
   };
 
-  // Poll cada 2 segundos
+  function startPolling() {
+    const intervalId = setInterval(poll, 2000);
+    poll();
+    // Return cleanup function
+    active = false;
+    clearInterval(intervalId);
+  }
+
+  // If EventSource is available, the return above handles cleanup.
+  // If we fell through to polling, set up the interval now.
   const intervalId = setInterval(poll, 2000);
-  // Primera llamada inmediata
   poll();
 
   return () => {

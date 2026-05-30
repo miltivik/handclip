@@ -87,6 +87,12 @@ export default function ProjectScreen() {
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
       />
+      <TouchableOpacity
+        style={styles.manualButton}
+        onPress={() => router.push(`/project/${id}/manual-select`)}
+      >
+        <Text style={styles.manualButtonText}>Seleccionar manualmente</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -124,5 +130,19 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 14,
     color: '#666',
+  },
+  manualButton: {
+    margin: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#007AFF',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+  },
+  manualButtonText: {
+    color: '#007AFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
