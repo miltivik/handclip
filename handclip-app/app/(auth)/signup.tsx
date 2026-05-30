@@ -21,18 +21,17 @@ export default function SignupScreen() {
   const [errorMessage, setErrorMessage] = useState('');
 
   const signUp = useAuthStore((state) => state.signUp);
+  const signInWithGoogle = useAuthStore((state) => state.signInWithGoogle);
 
   const handleSignUp = async () => {
     if (!email || !password || !confirmPassword) {
       setErrorMessage('Por favor completa todos los campos');
       return;
     }
-
     if (password !== confirmPassword) {
       setErrorMessage('Las contraseñas no coinciden');
       return;
     }
-
     if (password.length < 6) {
       setErrorMessage('La contraseña debe tener al menos 6 caracteres');
       return;
@@ -45,7 +44,19 @@ export default function SignupScreen() {
       await signUp(email, password);
       router.replace('/');
     } catch (error: any) {
-      setErrorMessage(error.message || 'Error al crear la cuenta');
+      setErrorMessage(error.message || 'Error al crear cuenta');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignUp = async () => {
+    setLoading(true);
+    setErrorMessage('');
+    try {
+      await signInWithGoogle();
+    } catch (error: any) {
+      setErrorMessage(error.message || 'Error al registrarse con Google');
     } finally {
       setLoading(false);
     }
@@ -62,7 +73,7 @@ export default function SignupScreen() {
       >
         <View style={styles.header}>
           <Text style={styles.title}>HandClip</Text>
-          <Text style={styles.subtitle}>Crea tu cuenta para comenzar</Text>
+          <Text style={styles.subtitle}>Crea tu cuenta gratuita</Text>
         </View>
 
         <View style={styles.form}>
@@ -86,7 +97,7 @@ export default function SignupScreen() {
               style={styles.input}
               value={password}
               onChangeText={setPassword}
-              placeholder="••••••••"
+              placeholder="Mínimo 6 caracteres"
               placeholderTextColor="#9CA3AF"
               secureTextEntry
             />
@@ -98,7 +109,7 @@ export default function SignupScreen() {
               style={styles.input}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
-              placeholder="••••••••"
+              placeholder="Repite tu contraseña"
               placeholderTextColor="#9CA3AF"
               secureTextEntry
             />
@@ -121,6 +132,14 @@ export default function SignupScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
+            style={[styles.googleButton, loading && styles.buttonDisabled]}
+            onPress={handleGoogleSignUp}
+            disabled={loading}
+          >
+            <Text style={styles.googleButtonText}>G  Registrarse con Google</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
             style={styles.linkContainer}
             onPress={() => router.push('/login')}
           >
@@ -138,7 +157,7 @@ export default function SignupScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F0F0F',
+    backgroundColor: '#FFFFFF',
   },
   scrollContent: {
     flexGrow: 1,
@@ -150,14 +169,14 @@ const styles = StyleSheet.create({
     marginBottom: 40,
   },
   title: {
-    fontSize: 36,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 8,
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#1a1a1a',
   },
   subtitle: {
     fontSize: 16,
-    color: '#9CA3AF',
+    color: '#6B7280',
+    marginTop: 8,
   },
   form: {
     width: '100%',
@@ -167,51 +186,63 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#D1D5DB',
-    marginBottom: 8,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 6,
   },
   input: {
-    backgroundColor: '#1F1F1F',
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    color: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#2D2D2D',
+    borderColor: '#D1D5DB',
+    borderRadius: 10,
+    padding: 14,
+    fontSize: 16,
+    color: '#1a1a1a',
+    backgroundColor: '#F9FAFB',
   },
   errorText: {
-    color: '#EF4444',
+    color: '#DC2626',
     fontSize: 14,
     marginBottom: 16,
     textAlign: 'center',
   },
   button: {
-    backgroundColor: '#6366F1',
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: '#1a1a1a',
+    paddingVertical: 16,
+    borderRadius: 10,
     alignItems: 'center',
-    marginTop: 8,
+    marginBottom: 12,
   },
   buttonDisabled: {
-    backgroundColor: '#4F46E5',
-    opacity: 0.7,
+    opacity: 0.6,
   },
   buttonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
+  googleButton: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#D1D5DB',
+    marginBottom: 20,
+  },
+  googleButtonText: {
+    color: '#374151',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   linkContainer: {
     alignItems: 'center',
-    marginTop: 24,
   },
   linkText: {
-    color: '#9CA3AF',
     fontSize: 14,
+    color: '#6B7280',
   },
   linkTextBold: {
-    color: '#6366F1',
+    color: '#1a1a1a',
     fontWeight: '600',
   },
 });

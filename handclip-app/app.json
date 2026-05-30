@@ -32,7 +32,8 @@
           "supportsBackgroundAudio": true
         }
       ],
-      "expo-image-picker"
+      "expo-image-picker",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
