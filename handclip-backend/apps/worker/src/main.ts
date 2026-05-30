@@ -20,6 +20,12 @@ async function bootstrap() {
     await app.close();
     process.exit(0);
   });
+
+  process.on('SIGINT', async () => {
+    console.log('SIGINT received, shutting down gracefully');
+    await app.close();
+    process.exit(0);
+  });
 }
 
 bootstrap();

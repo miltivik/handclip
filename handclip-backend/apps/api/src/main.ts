@@ -9,12 +9,35 @@ if (missing.length > 0) {
 
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import helmet from 'helmet';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  app.enableCors();
+  // Security headers
+  app.use(helmet());
+
+  // CORS hardening — only allow frontend origin in production
+  app.enableCors({
+    origin: process.env.CORS_ORIGINS
+      ? process.env.CORS_ORIGINS.split(',').map((s) => s.trim())
+      : '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+  });
+
   app.setGlobalPrefix('api');
+
+  // Graceful shutdown
+  const signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT'];
+  for (const signal of signals) {
+    process.on(signal, async () => {
+      console.log(`\nReceived ${signal}, shutting down gracefully...`);
+      await app.close();
+      process.exit(0);
+    });
+  }
 
   const port = process.env.PORT || 3000;
   await app.listen(port);

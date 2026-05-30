@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { BullModule } from '@nestjs/bullmq';
 import { SupabaseModule } from './modules/supabase/supabase.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -16,6 +18,10 @@ import { ExportsModule } from './modules/exports/exports.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    ThrottlerModule.forRoot([{
+      ttl: 60000,      // 1 minute window
+      limit: 100,       // 100 requests per minute
+    }]),
     BullModule.forRoot({
       connection: {
         host: process.env.REDIS_HOST || 'localhost',
@@ -30,6 +36,12 @@ import { ExportsModule } from './modules/exports/exports.module';
     JobsModule,
     HealthModule,
     ExportsModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
   ],
 })
 export class AppModule {}
