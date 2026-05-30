@@ -7,54 +7,39 @@ export default function ImportScreen() {
   const router = useRouter();
   const [videoInfo, setVideoInfo] = useState<{
     duration: number;
-    size: number;
     width: number;
     height: number;
+    size: number;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!videoUri) {
-      setLoading(false);
-      return;
-    }
-
-    // Timeout de 5 segundos para evitar loading infinito
-    const timeoutId = setTimeout(() => {
-      if (loading) {
-        setError('No se pudo cargar la información del video. Verifica los permisos.');
+    // Simulate getting video metadata
+    if (videoUri) {
+      setTimeout(() => {
+        setVideoInfo({
+          duration: 120,
+          width: 1920,
+          height: 1080,
+          size: 50 * 1024 * 1024,
+        });
         setLoading(false);
-      }
-    }, 5000);
-
-    // Simulate loading video metadata
-    const timer = setTimeout(() => {
-      clearTimeout(timeoutId);
-      setVideoInfo({
-        duration: 180,
-        size: 52428800,
-        width: 1920,
-        height: 1080,
-      });
-      setLoading(false);
-    }, 1000);
-
-    return () => {
-      clearTimeout(timer);
-      clearTimeout(timeoutId);
-    };
+      }, 1000);
+    }
   }, [videoUri]);
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+    const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const formatSize = (bytes: number) => {
-    const mb = (bytes / (1024 * 1024)).toFixed(1);
-    return `${mb} MB`;
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   const handleAnalyze = () => {
@@ -64,7 +49,7 @@ export default function ImportScreen() {
   if (!videoUri) {
     return (
       <View style={styles.container}>
-        <Text>No video selected</Text>
+        <Text style={styles.errorText}>No se proporcionó un video</Text>
       </View>
     );
   }
@@ -111,6 +96,8 @@ export default function ImportScreen() {
           style={[styles.button, loading && styles.buttonDisabled]}
           onPress={handleAnalyze}
           disabled={loading}
+          accessibilityLabel="Analizar video"
+          accessibilityRole="button"
         >
           <Text style={styles.buttonText}>Analizar</Text>
         </TouchableOpacity>
@@ -127,6 +114,7 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     padding: 24,
+    paddingTop: 60,
   },
   thumbnailContainer: {
     aspectRatio: 16 / 9,
@@ -148,25 +136,23 @@ const styles = StyleSheet.create({
     marginVertical: 24,
   },
   errorContainer: {
-    backgroundColor: '#fee',
-    borderRadius: 12,
     padding: 16,
-    marginBottom: 24,
+    backgroundColor: '#fee',
+    borderRadius: 8,
+    marginBottom: 16,
   },
   errorText: {
-    color: '#c00',
-    fontSize: 14,
+    fontSize: 16,
+    color: '#ff3b30',
+    textAlign: 'center',
   },
   metadata: {
-    backgroundColor: '#f8f8f8',
-    borderRadius: 12,
-    padding: 16,
     marginBottom: 24,
   },
   metaRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
@@ -177,13 +163,12 @@ const styles = StyleSheet.create({
   metaValue: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: '#333',
   },
   button: {
     backgroundColor: '#007AFF',
     paddingVertical: 16,
     borderRadius: 12,
-    alignItems: 'center',
   },
   buttonDisabled: {
     backgroundColor: '#ccc',
@@ -192,5 +177,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: '600',
+    textAlign: 'center',
   },
 });

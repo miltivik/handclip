@@ -48,6 +48,9 @@ export default function TrimHandles({
       <View
         style={[styles.handle, styles.leftHandle, { left: leftHandlePosition - 22 }]}
         {...leftPanResponder.panHandlers}
+        accessible={true}
+        accessibilityLabel="Inicio del recorte"
+        accessibilityRole="adjustable"
       >
         <View style={styles.handleBar} />
       </View>
@@ -55,6 +58,9 @@ export default function TrimHandles({
       <View
         style={[styles.handle, styles.rightHandle, { left: rightHandlePosition - 22 }]}
         {...rightPanResponder.panHandlers}
+        accessible={true}
+        accessibilityLabel="Fin del recorte"
+        accessibilityRole="adjustable"
       >
         <View style={styles.handleBar} />
       </View>

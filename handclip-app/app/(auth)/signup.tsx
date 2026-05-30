@@ -88,6 +88,8 @@ export default function SignupScreen() {
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
+              accessibilityLabel="Correo electrónico"
+              textContentType="emailAddress"
             />
           </View>
 
@@ -100,6 +102,8 @@ export default function SignupScreen() {
               placeholder="Mínimo 6 caracteres"
               placeholderTextColor="#9CA3AF"
               secureTextEntry
+              accessibilityLabel="Contraseña"
+              textContentType="newPassword"
             />
           </View>
 
@@ -112,17 +116,21 @@ export default function SignupScreen() {
               placeholder="Repite tu contraseña"
               placeholderTextColor="#9CA3AF"
               secureTextEntry
+              accessibilityLabel="Confirmar contraseña"
+              textContentType="newPassword"
             />
           </View>
 
           {errorMessage ? (
-            <Text style={styles.errorText}>{errorMessage}</Text>
+            <Text style={styles.errorText} accessibilityRole="alert">{errorMessage}</Text>
           ) : null}
 
           <TouchableOpacity
             style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleSignUp}
             disabled={loading}
+            accessibilityLabel="Crear cuenta"
+            accessibilityRole="button"
           >
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -135,6 +143,8 @@ export default function SignupScreen() {
             style={[styles.googleButton, loading && styles.buttonDisabled]}
             onPress={handleGoogleSignUp}
             disabled={loading}
+            accessibilityLabel="Registrarse con Google"
+            accessibilityRole="button"
           >
             <Text style={styles.googleButtonText}>G  Registrarse con Google</Text>
           </TouchableOpacity>
@@ -142,6 +152,8 @@ export default function SignupScreen() {
           <TouchableOpacity
             style={styles.linkContainer}
             onPress={() => router.push('/login')}
+            accessibilityLabel="Ir a inicio de sesión"
+            accessibilityRole="link"
           >
             <Text style={styles.linkText}>
               ¿Ya tienes cuenta?{' '}

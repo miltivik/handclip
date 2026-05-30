@@ -36,6 +36,8 @@ export default function SubtitleOverlay({
           onSubtitleTap(activeIndex, activeSubtitle.text, activeSubtitle.startTime, activeSubtitle.endTime);
         }
       }}
+      accessibilityLabel={`Subtítulo: ${activeSubtitle.text}`}
+      accessibilityRole="button"
     >
       <View style={[styles.container, position === 'top' ? styles.top : styles.bottom]}>
         <View style={styles.background}>

@@ -11,7 +11,13 @@ interface ProjectCardProps {
 
 function ProjectCard({ project, onPress }: ProjectCardProps) {
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
+    <TouchableOpacity 
+      style={styles.card} 
+      onPress={onPress} 
+      activeOpacity={0.7}
+      accessibilityLabel={`Abrir proyecto ${project.name || 'Proyecto sin nombre'}`}
+      accessibilityRole="button"
+    >
       <View style={styles.cardContent}>
         <Text style={styles.cardTitle} numberOfLines={1}>
           {project.name || 'Proyecto sin nombre'}
@@ -70,7 +76,7 @@ export default function HomeTab() {
   if (isLoading) {
     return (
       <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
+        <ActivityIndicator size="large" color="#007AFF" accessibilityLabel="Cargando proyectos" />
         <Text style={styles.loadingText}>Cargando proyectos...</Text>
       </View>
     );

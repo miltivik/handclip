@@ -17,7 +17,7 @@ export default function CandidateCard({ candidate, onEdit }: CandidateCardProps)
   const duration = candidate.duration ?? (candidate.endTime - candidate.startTime);
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} accessible={true} accessibilityLabel={`Clip de ${Math.floor(candidate.startTime)}s a ${Math.floor(candidate.endTime)}s, puntuación ${candidate.confidenceScore}`}>
       <View style={styles.thumbnailContainer}>
         <View style={styles.thumbnailPlaceholder}>
           <Text style={styles.thumbnailPlaceholderText}>Preview</Text>
@@ -44,7 +44,7 @@ export default function CandidateCard({ candidate, onEdit }: CandidateCardProps)
           ))}
         </View>
 
-        <TouchableOpacity style={styles.editButton} onPress={onEdit}>
+        <TouchableOpacity style={styles.editButton} onPress={onEdit} accessibilityLabel="Editar clip" accessibilityRole="button">
           <Text style={styles.editButtonText}>Editar</Text>
         </TouchableOpacity>
       </View>

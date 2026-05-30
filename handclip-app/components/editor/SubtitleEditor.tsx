@@ -35,12 +35,13 @@ export default function SubtitleEditor({
             autoFocus
             placeholder="Corrige el texto..."
             placeholderTextColor="#999"
+            accessibilityLabel="Editar texto del subtítulo"
           />
           <View style={styles.actions}>
-            <TouchableOpacity onPress={onCancel} style={styles.button}>
+            <TouchableOpacity onPress={onCancel} style={styles.button} accessibilityLabel="Cancelar edición" accessibilityRole="button">
               <Text style={styles.cancelButton}>Cancelar</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => onSave(text)} style={styles.button}>
+            <TouchableOpacity onPress={() => onSave(text)} style={styles.button} accessibilityLabel="Guardar cambios" accessibilityRole="button">
               <Text style={styles.saveButton}>Guardar</Text>
             </TouchableOpacity>
           </View>

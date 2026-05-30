@@ -76,24 +76,33 @@ export default function ExportScreen() {
 
       {error ? (
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>{error}</Text>
+          <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text>
           <TouchableOpacity
             style={styles.retryButton}
             onPress={() => router.back()}
+            accessibilityLabel="Volver al editor"
+            accessibilityRole="button"
           >
             <Text style={styles.retryButtonText}>Volver al editor</Text>
           </TouchableOpacity>
         </View>
       ) : isComplete ? (
         <View style={styles.successContainer}>
-          <Text style={styles.successIcon}>✓</Text>
-          <Text style={styles.successText}>Tu video está listo</Text>
-          <TouchableOpacity style={styles.downloadButton} onPress={handleDownload}>
+          <Text accessibilityRole="alert" style={styles.successIcon}>✓</Text>
+          <Text accessibilityRole="alert" style={styles.successText}>Tu video está listo</Text>
+          <TouchableOpacity 
+            style={styles.downloadButton} 
+            onPress={handleDownload}
+            accessibilityLabel="Descargar clip"
+            accessibilityRole="button"
+          >
             <Text style={styles.downloadButtonText}>Descargar / Compartir</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.doneButton}
             onPress={() => router.push('/(tabs)/library')}
+            accessibilityLabel="Ver en biblioteca"
+            accessibilityRole="button"
           >
             <Text style={styles.doneButtonText}>Ver en biblioteca</Text>
           </TouchableOpacity>
@@ -104,7 +113,7 @@ export default function ExportScreen() {
           <View style={styles.progressBarContainer}>
             <View style={[styles.progressBar, { width: `${progress}%` }]} />
           </View>
-          <Text style={styles.progressText}>
+          <Text accessibilityLabel={`Exportando clip, ${progress}%`} style={styles.progressText}>
             {status === 'PENDING' ? 'Iniciando...' : `Renderizando... ${progress}%`}
           </Text>
         </View>
@@ -120,34 +129,35 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   title: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: 'bold',
-    color: '#1a1a1a',
-    marginBottom: 32,
+    marginBottom: 24,
+    color: '#333',
   },
   section: {
     marginBottom: 32,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: '#666',
     marginBottom: 8,
   },
   presetLabel: {
-    fontSize: 16,
-    color: '#666',
+    fontSize: 14,
+    color: '#333',
   },
   progressContainer: {
     alignItems: 'center',
-    paddingVertical: 40,
+    marginTop: 40,
   },
   progressBarContainer: {
     width: '100%',
     height: 8,
     backgroundColor: '#eee',
     borderRadius: 4,
-    marginTop: 24,
+    marginTop: 20,
+    marginBottom: 16,
     overflow: 'hidden',
   },
   progressBar: {
@@ -158,71 +168,67 @@ const styles = StyleSheet.create({
   progressText: {
     fontSize: 16,
     color: '#666',
-    marginTop: 16,
   },
   successContainer: {
     alignItems: 'center',
-    paddingVertical: 40,
+    marginTop: 40,
   },
   successIcon: {
-    fontSize: 64,
-    color: '#34C759',
+    fontSize: 48,
     marginBottom: 16,
   },
   successText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#1a1a1a',
-    marginBottom: 32,
+    fontSize: 18,
+    color: '#333',
+    marginBottom: 24,
   },
   downloadButton: {
     backgroundColor: '#007AFF',
-    paddingVertical: 16,
+    paddingVertical: 14,
     paddingHorizontal: 32,
     borderRadius: 12,
-    alignItems: 'center',
+    marginBottom: 16,
     width: '100%',
-    marginBottom: 12,
   },
   downloadButtonText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
+    textAlign: 'center',
   },
   doneButton: {
     backgroundColor: '#f0f0f0',
-    paddingVertical: 16,
+    paddingVertical: 14,
     paddingHorizontal: 32,
     borderRadius: 12,
-    alignItems: 'center',
     width: '100%',
   },
   doneButtonText: {
-    color: '#666',
+    color: '#333',
     fontSize: 16,
     fontWeight: '600',
+    textAlign: 'center',
   },
   errorContainer: {
-    alignItems: 'center',
-    paddingVertical: 40,
+    marginTop: 40,
   },
   errorText: {
     fontSize: 16,
-    color: '#FF3B30',
+    color: '#ff3b30',
+    marginBottom: 16,
     textAlign: 'center',
-    marginBottom: 24,
   },
   retryButton: {
     backgroundColor: '#007AFF',
-    paddingVertical: 16,
+    paddingVertical: 14,
     paddingHorizontal: 32,
     borderRadius: 12,
-    alignItems: 'center',
     width: '100%',
   },
   retryButtonText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
+    textAlign: 'center',
   },
 });

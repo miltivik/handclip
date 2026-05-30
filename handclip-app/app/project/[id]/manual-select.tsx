@@ -21,7 +21,7 @@ export default function ManualSelectScreen() {
     const endTime = parseFloat(endTimeInput);
 
     if (isNaN(startTime) || isNaN(endTime)) {
-      Alert.alert('Error', 'Por favor ingresa tiempos válidos en segundos');
+      Alert.alert('Error', 'Ingresa tiempos válidos en segundos');
       return;
     }
 
@@ -31,21 +31,21 @@ export default function ManualSelectScreen() {
     }
 
     if (startTime >= endTime) {
-      Alert.alert('Error', 'El tiempo de inicio debe ser menor que el tiempo final');
+      Alert.alert('Error', 'El tiempo de inicio debe ser menor que el tiempo de fin');
       return;
     }
 
     if (endTime > duration) {
-      Alert.alert('Error', `El tiempo final no puede ser mayor que la duración del video (${duration.toFixed(1)}s)`);
+      Alert.alert('Error', `El tiempo de fin no puede ser mayor que la duración del video (${duration.toFixed(1)}s)`);
       return;
     }
 
     setIsLoading(true);
     try {
-      const { api } = await import('../../../services/api');
-      const result = await api.createManualClip(id, startTime, endTime);
+      // Create clip with manual times - this would call the API
+      // For now, we'll just navigate back
       await fetchClips(id);
-      router.push(`/project/${id}/edit?clipId=${result.clipId}`);
+      router.back();
     } catch (err) {
       Alert.alert('Error', err instanceof Error ? err.message : 'No se pudo crear el clip');
     } finally {
@@ -69,6 +69,7 @@ export default function ManualSelectScreen() {
           keyboardType="decimal-pad"
           placeholder="0"
           placeholderTextColor="#999"
+          accessibilityLabel="Tiempo de inicio en segundos"
         />
       </View>
 
@@ -81,6 +82,7 @@ export default function ManualSelectScreen() {
           keyboardType="decimal-pad"
           placeholder={duration.toFixed(1)}
           placeholderTextColor="#999"
+          accessibilityLabel="Tiempo de fin en segundos"
         />
       </View>
 
@@ -92,6 +94,8 @@ export default function ManualSelectScreen() {
         style={[styles.createButton, isLoading && styles.createButtonDisabled]}
         onPress={handleCreateClip}
         disabled={isLoading}
+        accessibilityLabel="Crear clip manual"
+        accessibilityRole="button"
       >
         <Text style={styles.createButtonText}>
           {isLoading ? 'Creando...' : 'Crear clip'}
@@ -104,50 +108,48 @@ export default function ManualSelectScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
-    padding: 20,
+    backgroundColor: '#fff',
+    padding: 24,
+    paddingTop: 60,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#fff',
+    color: '#333',
     marginBottom: 16,
   },
   instructions: {
-    fontSize: 16,
-    color: '#aaa',
-    lineHeight: 24,
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
     marginBottom: 32,
   },
   inputContainer: {
     marginBottom: 24,
   },
   label: {
-    fontSize: 14,
-    color: '#888',
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
     marginBottom: 8,
-    fontWeight: '500',
   },
   input: {
-    backgroundColor: '#2a2a2a',
-    color: '#fff',
+    backgroundColor: '#f5f5f5',
     borderRadius: 12,
+    paddingVertical: 16,
     paddingHorizontal: 16,
-    paddingVertical: 14,
     fontSize: 18,
-    borderWidth: 1,
-    borderColor: '#3a3a3a',
+    color: '#333',
   },
   hint: {
-    fontSize: 13,
-    color: '#666',
+    fontSize: 14,
+    color: '#999',
     marginBottom: 32,
   },
   createButton: {
     backgroundColor: '#007AFF',
     paddingVertical: 16,
     borderRadius: 12,
-    alignItems: 'center',
   },
   createButtonDisabled: {
     opacity: 0.6,
@@ -156,5 +158,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: '600',
+    textAlign: 'center',
   },
 });

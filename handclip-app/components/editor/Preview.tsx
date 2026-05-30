@@ -16,7 +16,7 @@ export default function Preview({ videoUri, subtitles, currentTime = 0 }: Previe
   const isPlaceholder = !videoUri || videoUri === 'placeholder';
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} accessibilityLabel="Vista previa del video">
       {isPlaceholder ? (
         <View style={styles.placeholder}>
           <Text style={styles.placeholderText}>Video Preview (9:16)</Text>

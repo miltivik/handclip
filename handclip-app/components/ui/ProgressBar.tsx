@@ -23,7 +23,7 @@ export default function ProgressBar({ stage, percentage }: ProgressBarProps) {
   });
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} accessibilityLabel={`Progreso: ${percentage}%`} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: percentage }}>
       <View style={styles.labelContainer}>
         <Text style={styles.stage}>{stage}</Text>
         <Text style={styles.percentage}>{percentage}%</Text>

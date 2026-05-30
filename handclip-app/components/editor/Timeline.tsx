@@ -93,10 +93,10 @@ export default function Timeline({
   const numTicks = Math.ceil(duration / tickInterval) + 1;
 
   return (
-    <View style={styles.container} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
+    <View style={styles.container} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} accessibilityLabel={`Línea de tiempo, ${formatTime(trimStart)} a ${formatTime(trimEnd)}`}>
       {/* Zoom indicator */}
       {showZoomIndicator && (
-        <View style={styles.zoomIndicator}>
+        <View style={styles.zoomIndicator} accessibilityLabel={`Zoom: ${zoomLevel.toFixed(1)}x`} accessibilityRole="text">
           <Text style={styles.zoomIndicatorText}>{zoomLevel.toFixed(1)}x</Text>
         </View>
       )}

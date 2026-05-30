@@ -85,7 +85,7 @@ export default function HomeScreen() {
 
         {error && (
           <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{error}</Text>
+            <Text style={styles.errorText} accessibilityRole="alert">{error}</Text>
           </View>
         )}
 
@@ -93,6 +93,8 @@ export default function HomeScreen() {
           style={[styles.button, loading && styles.buttonDisabled]}
           onPress={handleImportVideo}
           disabled={loading}
+          accessibilityLabel="Importar video"
+          accessibilityRole="button"
         >
           {loading ? (
             <ActivityIndicator color="#fff" />

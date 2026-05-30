@@ -45,24 +45,27 @@ export default function EditScreen() {
 
   // Load project, clips, and subtitles on mount
   useEffect(() => {
-    if (!id) return;
-    fetchProject(id);
-    fetchClips(id);
+    if (id) {
+      fetchProject(id);
+      fetchClips(id);
+    }
   }, [id, fetchProject, fetchClips]);
 
   // Load subtitles when clipId changes
   useEffect(() => {
-    if (!id || !clipId) return;
-    fetchSubtitles(id, clipId);
+    if (id && clipId) {
+      fetchSubtitles(id, clipId);
+    }
   }, [id, clipId, fetchSubtitles]);
 
   // Find selected clip and set trim handles from clip's actual times
   useEffect(() => {
-    if (!clips.length || !clipId) return;
-    const selectedClip = clips.find((c) => c.id === clipId);
-    if (selectedClip) {
-      setTrimStart(selectedClip.startTime);
-      setTrimEnd(selectedClip.endTime);
+    if (clips.length > 0 && clipId) {
+      const selectedClip = clips.find((c) => c.id === clipId);
+      if (selectedClip) {
+        setTrimStart(selectedClip.startTime);
+        setTrimEnd(selectedClip.endTime);
+      }
     }
   }, [clips, clipId, setTrimStart, setTrimEnd]);
 
@@ -70,70 +73,45 @@ export default function EditScreen() {
   const { player, currentTime, duration } = useAppVideoPlayer(videoUrl);
 
   const handleExport = async () => {
-    if (!clipId) {
-      Alert.alert('Error', 'No hay un clip seleccionado');
-      return;
-    }
-    try {
-      // Use subtitles from editor store or project store
-      const exportSubtitles = subtitles.length > 0 ? subtitles : projectSubtitles.map((s) => ({
-        id: s.id,
-        text: s.text,
-        startTime: s.startTime,
-        endTime: s.endTime,
-      }));
+    if (!id || !clipId) return;
 
-      const result = await api.exportClip(id!, {
-        clipId,
-        trimStart,
-        trimEnd,
-        subtitles: exportSubtitles,
-        preset,
-        ...(musicUrl && {
-          musicUrl,
-          musicVolume,
-          musicFadeIn: 0.5,
-          musicFadeOut: 0.5,
-        }),
-      });
-      router.push(`/project/${id}/export?jobId=${result.jobId}&preset=${preset}`);
+    try {
+      const result = await api.createExportJob(id, clipId, preset);
+      if (result.jobId) {
+        router.push(`/project/${id}/export?jobId=${result.jobId}&preset=${preset}`);
+      }
     } catch (err) {
-      Alert.alert('Error al iniciar exportación', err instanceof Error ? err.message : 'Error desconocido');
+      Alert.alert('Error', err instanceof Error ? err.message : 'No se pudo iniciar la exportación');
     }
   };
   const handleSubtitleTap = (index: number, text: string, startTime: number, endTime: number) => {
     setEditingSubtitle({ index, text, startTime, endTime });
   };
   const handleSubtitleSave = (newText: string) => {
-    if (!editingSubtitle) return;
-    const updated = [...subtitles];
-    if (updated[editingSubtitle.index]) {
+    if (editingSubtitle) {
+      const updated = [...subtitles];
       updated[editingSubtitle.index] = { ...updated[editingSubtitle.index], text: newText };
       setSubtitles(updated);
+      setEditingSubtitle(null);
     }
-    setEditingSubtitle(null);
   };
   const handleSubtitleCancel = () => {
     setEditingSubtitle(null);
   };
   const handleSelectMusic = async () => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({ type: 'audio/*' });
-      if (result.canceled || !result.assets?.length) return;
-      const asset = result.assets[0];
-      const { audioUrl } = await api.uploadAudioFile({
-        uri: asset.uri,
-        fileName: asset.name,
-        mimeType: asset.mimeType ?? undefined,
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'audio/*',
       });
-      setMusicUrl(audioUrl);
+      if (result.canceled === false && result.assets && result.assets[0]) {
+        setMusicUrl(result.assets[0].uri);
+      }
     } catch (err) {
-      Alert.alert('Error', 'No se pudo subir el audio');
+      Alert.alert('Error', 'No se pudo seleccionar el archivo de audio');
     }
   };
   const handleRemoveMusic = () => {
     setMusicUrl(null);
-    setMusicVolume(0.3);
   };
   const handleVolumeChange = (delta: number) => {
     setMusicVolume((prev) => Math.max(0, Math.min(2, prev + delta)));
@@ -178,7 +156,12 @@ export default function EditScreen() {
       <View style={styles.musicSection}>
         <Text style={styles.musicLabel}>🎵 Música</Text>
         {!musicUrl ? (
-          <TouchableOpacity style={styles.musicSelectButton} onPress={handleSelectMusic}>
+          <TouchableOpacity 
+            style={styles.musicSelectButton} 
+            onPress={handleSelectMusic}
+            accessibilityLabel="Seleccionar archivo de audio"
+            accessibilityRole="button"
+          >
             <Text style={styles.musicSelectButtonText}>Seleccionar audio</Text>
           </TouchableOpacity>
         ) : (
@@ -188,6 +171,8 @@ export default function EditScreen() {
               <TouchableOpacity
                 style={styles.volumeButton}
                 onPress={() => handleVolumeChange(-0.1)}
+                accessibilityLabel="Bajar volumen"
+                accessibilityRole="button"
               >
                 <Text style={styles.volumeButtonText}>−</Text>
               </TouchableOpacity>
@@ -195,11 +180,18 @@ export default function EditScreen() {
               <TouchableOpacity
                 style={styles.volumeButton}
                 onPress={() => handleVolumeChange(0.1)}
+                accessibilityLabel="Subir volumen"
+                accessibilityRole="button"
               >
                 <Text style={styles.volumeButtonText}>+</Text>
               </TouchableOpacity>
             </View>
-            <TouchableOpacity style={styles.removeMusicButton} onPress={handleRemoveMusic}>
+            <TouchableOpacity 
+              style={styles.removeMusicButton} 
+              onPress={handleRemoveMusic}
+              accessibilityLabel="Quitar música"
+              accessibilityRole="button"
+            >
               <Text style={styles.removeMusicButtonText}>Quitar</Text>
             </TouchableOpacity>
           </View>
@@ -218,7 +210,12 @@ export default function EditScreen() {
       </View>
 
       <View style={styles.footer}>
-        <TouchableOpacity style={styles.exportButton} onPress={handleExport}>
+        <TouchableOpacity 
+          style={styles.exportButton} 
+          onPress={handleExport}
+          accessibilityLabel="Exportar clip"
+          accessibilityRole="button"
+        >
           <Text style={styles.exportButtonText}>Exportar</Text>
         </TouchableOpacity>
       </View>
@@ -233,50 +230,31 @@ const styles = StyleSheet.create({
   },
   previewContainer: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     justifyContent: 'center',
     alignItems: 'center',
   },
   video: {
     width: '100%',
-    height: '100%',
-  },
-  timelineContainer: {
-    height: 200,
-    backgroundColor: '#2a2a2a',
-  },
-  footer: {
-    padding: 16,
-    backgroundColor: '#1a1a1a',
-  },
-  exportButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  exportButtonText: {
-    color: '#fff',
-    fontSize: 18,
+    aspectRatio: 9 / 16,
   },
   musicSection: {
-    padding: 12,
     backgroundColor: '#1a1a1a',
+    padding: 16,
     borderTopWidth: 1,
     borderTopColor: '#333',
   },
   musicLabel: {
+    fontSize: 16,
     color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
     marginBottom: 8,
   },
   musicSelectButton: {
     backgroundColor: '#333',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
     borderRadius: 8,
-    alignItems: 'center',
+    alignSelf: 'flex-start',
   },
   musicSelectButtonText: {
     color: '#fff',
@@ -288,43 +266,63 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   musicFileName: {
-    color: '#aaa',
-    fontSize: 13,
-    flex: 1,
+    color: '#fff',
+    fontSize: 14,
   },
   volumeControls: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   volumeButton: {
-    backgroundColor: '#444',
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
+    backgroundColor: '#333',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   volumeButtonText: {
     color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 24,
   },
   volumeLabel: {
     color: '#fff',
     fontSize: 14,
-    marginHorizontal: 10,
-    minWidth: 40,
+    marginHorizontal: 12,
+    minWidth: 48,
     textAlign: 'center',
   },
   removeMusicButton: {
-    backgroundColor: '#ff4444',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    marginLeft: 8,
+    backgroundColor: '#ff3b30',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
   },
   removeMusicButtonText: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 14,
+  },
+  timelineContainer: {
+    height: 80,
+    backgroundColor: '#1a1a1a',
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  footer: {
+    backgroundColor: '#1a1a1a',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  exportButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 16,
+    borderRadius: 12,
+  },
+  exportButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });

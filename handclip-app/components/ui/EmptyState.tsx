@@ -23,7 +23,7 @@ export default function EmptyState({
       <Text style={styles.subtitle}>{subtitle}</Text>
       
       {ctaLabel && onCtaPress && (
-        <TouchableOpacity style={styles.button} onPress={onCtaPress}>
+        <TouchableOpacity style={styles.button} onPress={onCtaPress} accessibilityLabel={ctaLabel} accessibilityRole="button">
           <Text style={styles.buttonText}>{ctaLabel}</Text>
         </TouchableOpacity>
       )}
