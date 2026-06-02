@@ -12,6 +12,7 @@ import { JobsModule } from './modules/jobs/jobs.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { HealthModule } from './modules/health/health.module';
 import { ExportsModule } from './modules/exports/exports.module';
+import { AiConnectionsModule } from './modules/ai-connections/ai-connections.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { ExportsModule } from './modules/exports/exports.module';
     }),
     SupabaseModule,
     AuthModule,
+    AiConnectionsModule,
     ProjectsModule,
     ClipsModule,
     UploadsModule,

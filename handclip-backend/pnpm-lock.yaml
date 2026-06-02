@@ -17,6 +17,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@earendil-works/pi-ai':
+        specifier: 0.78.0
+        version: 0.78.0(ws@8.21.0)(zod@3.25.76)
       '@handclip/shared':
         specifier: workspace:*
         version: link:../../libs/shared
@@ -3698,7 +3701,7 @@ snapshots:
       '@aws-sdk/types': 3.973.9
       '@smithy/core': 3.24.6
       '@smithy/fetch-http-handler': 5.4.6
-      '@smithy/node-http-handler': 4.7.3
+      '@smithy/node-http-handler': 4.7.6
       '@smithy/types': 4.14.3
       tslib: 2.8.1
 
