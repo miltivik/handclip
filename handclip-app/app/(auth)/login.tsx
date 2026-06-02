@@ -23,6 +23,7 @@ export default function LoginScreen() {
   const signIn = useAuthStore((state) => state.signIn);
   const signInWithGoogle = useAuthStore((state) => state.signInWithGoogle);
   const signInWithMagicLink = useAuthStore((state) => state.signInWithMagicLink);
+  const continueAnonymously = useAuthStore((state) => state.continueAnonymously);
 
   const handleSignIn = async () => {
     if (!email || !password) {
@@ -68,6 +69,11 @@ export default function LoginScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleContinueAnonymously = () => {
+    continueAnonymously();
+    router.replace('/(tabs)/home');
   };
 
   return (
@@ -158,6 +164,17 @@ export default function LoginScreen() {
           >
             <Text style={styles.magicLinkText}>Enviar enlace mágico</Text>
           </TouchableOpacity>
+
+          {__DEV__ && (
+            <TouchableOpacity
+              style={styles.anonymousButton}
+              onPress={handleContinueAnonymously}
+              accessibilityLabel="Continuar anonimamente"
+              accessibilityRole="button"
+            >
+              <Text style={styles.anonymousButtonText}>Continuar Anonimamente</Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             style={styles.linkContainer}
@@ -274,6 +291,19 @@ const styles = StyleSheet.create({
     color: '#6366F1',
     fontSize: 14,
     fontWeight: '500',
+  },
+  anonymousButton: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 10,
+  },
+  anonymousButtonText: {
+    color: '#374151',
+    fontSize: 14,
+    fontWeight: '600',
   },
   linkContainer: {
     alignItems: 'center',

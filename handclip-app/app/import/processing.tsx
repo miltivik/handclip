@@ -4,6 +4,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import ProgressBar from '../../components/ui/ProgressBar';
 import { api, subscribeJobProgress, ClipCandidate } from '../../services/api';
 import { useProjectStore } from '../../stores/project.store';
+import { useAuthStore } from '../../stores/auth.store';
 
 const STAGES = [
   'Transcribiendo audio...',
@@ -14,10 +15,19 @@ const STAGES = [
 export default function ProcessingScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ projectId: string; videoUrl: string }>();
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isAnonymous = useAuthStore((state) => state.isAnonymous);
   const [stage, setStage] = useState(0);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    if (isAnonymous || !isAuthenticated) {
+      setError('Necesitas una cuenta para iniciar el analisis IA.');
+      return;
+    }
+  }, [isAnonymous, isAuthenticated]);
 
   useEffect(() => {
     if (!params.projectId || !params.videoUrl) {
@@ -51,6 +61,14 @@ export default function ProcessingScreen() {
           },
           (err) => {
             // Error en SSE
+            if (
+              err.message?.toLowerCase().includes('active provider') ||
+              err.message?.toLowerCase().includes('oauth')
+            ) {
+              setError('Conecta un proveedor IA en Configuracion antes de analizar.');
+              setTimeout(() => router.replace('/settings' as any), 500);
+              return;
+            }
             setError(err.message);
           },
         );

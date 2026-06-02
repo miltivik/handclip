@@ -7,11 +7,13 @@ interface AuthState {
   user: User | null;
   loading: boolean;
   isAuthenticated: boolean;
+  isAnonymous: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signInWithMagicLink: (email: string) => Promise<{ success: boolean }>;
   signOut: () => Promise<void>;
+  continueAnonymously: () => void;
   loadSession: () => Promise<void>;
   initAuth: () => () => void;
 }
@@ -21,11 +23,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   loading: true,
   isAuthenticated: false,
+  isAnonymous: false,
 
   signUp: async (email: string, password: string) => {
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) throw error;
-    set({ session: data.session, user: data.user, isAuthenticated: !!data.session });
+    set({ session: data.session, user: data.user, isAuthenticated: !!data.session, isAnonymous: false });
   },
 
   signIn: async (email: string, password: string) => {
@@ -34,7 +37,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       password,
     });
     if (error) throw error;
-    set({ session: data.session, user: data.user, isAuthenticated: true });
+    set({ session: data.session, user: data.user, isAuthenticated: true, isAnonymous: false });
   },
 
   signInWithGoogle: async () => {
@@ -68,7 +71,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   signOut: async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
-    set({ session: null, user: null, isAuthenticated: false });
+    set({ session: null, user: null, isAuthenticated: false, isAnonymous: false });
+  },
+  continueAnonymously: () => {
+    if (__DEV__) {
+      set({ session: null, user: null, loading: false, isAuthenticated: false, isAnonymous: true });
+    }
   },
   loadSession: async () => {
     set({ loading: true });
@@ -78,24 +86,35 @@ export const useAuthStore = create<AuthState>((set) => ({
       user: session?.user ?? null,
       loading: false,
       isAuthenticated: !!session,
+      isAnonymous: false,
     });
   },
 
   initAuth: () => {
     // Cargar sesión existente al iniciar
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        set({ session, user: session.user, isAuthenticated: true });
-      }
+      set({
+        session,
+        user: session?.user ?? null,
+        loading: false,
+        isAuthenticated: !!session,
+        isAnonymous: false,
+      });
     });
 
     // Escuchar cambios de auth (login, logout, refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         if (session) {
-          set({ session, user: session.user, isAuthenticated: true });
+          set({ session, user: session.user, loading: false, isAuthenticated: true, isAnonymous: false });
         } else {
-          set({ session: null, user: null, isAuthenticated: false });
+          set((state) => ({
+            session: null,
+            user: null,
+            loading: false,
+            isAuthenticated: false,
+            isAnonymous: state.isAnonymous,
+          }));
         }
       }
     );

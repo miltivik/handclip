@@ -1,105 +1,130 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator } from 'react-native';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
+import { api } from '../../services/api';
+import { useAuthStore } from '../../stores/auth.store';
+import { showAccountRequired } from '../../lib/account-required';
+import { validateVideoFile } from '../../lib/validation';
 
 export default function ImportScreen() {
-  const { videoUri } = useLocalSearchParams<{ videoUri: string }>();
   const router = useRouter();
-  const [videoInfo, setVideoInfo] = useState<{
-    duration: number;
-    width: number;
-    height: number;
-    size: number;
-  } | null>(null);
-  const [loading, setLoading] = useState(true);
+  const isAnonymous = useAuthStore((state) => state.isAnonymous);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pickedLocal, setPickedLocal] = useState(false);
 
-  useEffect(() => {
-    // Simulate getting video metadata
-    if (videoUri) {
-      setTimeout(() => {
-        setVideoInfo({
-          duration: 120,
-          width: 1920,
-          height: 1080,
-          size: 50 * 1024 * 1024,
-        });
-        setLoading(false);
-      }, 1000);
+  const handlePickLocal = async () => {
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permissionResult.granted) {
+      setError('Se requieren permisos para acceder a la biblioteca de medios');
+      return;
     }
-  }, [videoUri]);
-
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024 * 1024) {
-      return `${(bytes / 1024).toFixed(1)} KB`;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['videos'],
+      allowsEditing: false,
+      quality: 1,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    const fileName = asset.uri.split('/').pop() || `video_${Date.now()}.mp4`;
+    const fileSize = asset.fileSize ?? 0;
+    const duration = asset.duration ?? 0;
+    const validation = validateVideoFile(fileName, fileSize, duration);
+    if (!validation.valid) {
+      Alert.alert('Video no valido', validation.error);
+      return;
     }
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    setPickedLocal(true);
   };
 
-  const handleAnalyze = () => {
-    router.push('/import/processing');
+  const handleImportVideo = async () => {
+    if (isAnonymous || !isAuthenticated) {
+      showAccountRequired();
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        setError('Se requieren permisos para acceder a la biblioteca de medios');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: false,
+        quality: 1,
+      });
+      if (result.canceled || !result.assets[0]) {
+        return;
+      }
+      const asset = result.assets[0];
+      const fileName = asset.uri.split('/').pop() || `video_${Date.now()}.mp4`;
+      const duration = asset.duration ?? 0;
+      const { projectId, videoUrl } = await api.uploadVideoFile({
+        uri: asset.uri,
+        fileName,
+        mimeType: 'video/mp4',
+        fileSize: asset.fileSize ?? 0,
+      });
+      router.push({
+        pathname: '/import/processing',
+        params: {
+          projectId,
+          videoUrl: encodeURIComponent(videoUrl),
+          duration: String(Math.round(duration)),
+          width: String(asset.width ?? 0),
+          height: String(asset.height ?? 0),
+        },
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al subir el video');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  if (!videoUri) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.errorText}>No se proporcionó un video</Text>
-      </View>
-    );
-  }
+  const handleLocalPreview = async () => {
+    await handlePickLocal();
+  };
 
   return (
     <View style={styles.container}>
       <View style={styles.content}>
-        <View style={styles.thumbnailContainer}>
-          <View style={styles.thumbnailPlaceholder}>
-            <Text style={styles.thumbnailText}>Video</Text>
-          </View>
-        </View>
-
-        {loading && !error && (
-          <ActivityIndicator size="large" color="#007AFF" style={styles.loader} />
-        )}
+        <Text style={styles.logo}>HandClip</Text>
+        <Text style={styles.subtitle}>Encuentra los mejores momentos de tus videos</Text>
 
         {error && (
           <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        )}
-
-        {!loading && !error && videoInfo && (
-          <View style={styles.metadata}>
-            <View style={styles.metaRow}>
-              <Text style={styles.metaLabel}>Duración</Text>
-              <Text style={styles.metaValue}>{formatDuration(videoInfo.duration)}</Text>
-            </View>
-            <View style={styles.metaRow}>
-              <Text style={styles.metaLabel}>Tamaño</Text>
-              <Text style={styles.metaValue}>{formatSize(videoInfo.size)}</Text>
-            </View>
-            <View style={styles.metaRow}>
-              <Text style={styles.metaLabel}>Resolución</Text>
-              <Text style={styles.metaValue}>
-                {videoInfo.width}x{videoInfo.height}
-              </Text>
-            </View>
+            <Text style={styles.errorText} accessibilityRole="alert">{error}</Text>
           </View>
         )}
 
         <TouchableOpacity
           style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleAnalyze}
+          onPress={handleImportVideo}
           disabled={loading}
-          accessibilityLabel="Analizar video"
+          accessibilityLabel="Importar video"
           accessibilityRole="button"
         >
-          <Text style={styles.buttonText}>Analizar</Text>
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Importar video</Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.secondaryButton]}
+          onPress={handleLocalPreview}
+          accessibilityLabel="Explorar video local"
+          accessibilityRole="button"
+        >
+          <Text style={styles.secondaryButtonText}>
+            {pickedLocal ? 'Video local listo' : 'Explorar video local'}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -110,73 +135,64 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
-  },
-  content: {
-    flex: 1,
-    padding: 24,
-    paddingTop: 60,
-  },
-  thumbnailContainer: {
-    aspectRatio: 16 / 9,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 12,
-    overflow: 'hidden',
-    marginBottom: 24,
-  },
-  thumbnailPlaceholder: {
-    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  thumbnailText: {
-    fontSize: 16,
-    color: '#999',
+  content: {
+    alignItems: 'center',
+    paddingHorizontal: 24,
   },
-  loader: {
-    marginVertical: 24,
-  },
-  errorContainer: {
-    padding: 16,
-    backgroundColor: '#fee',
-    borderRadius: 8,
+  logo: {
+    fontSize: 42,
+    fontWeight: 'bold',
+    color: '#1a1a1a',
     marginBottom: 16,
   },
-  errorText: {
-    fontSize: 16,
-    color: '#ff3b30',
-    textAlign: 'center',
-  },
-  metadata: {
-    marginBottom: 24,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  metaLabel: {
+  subtitle: {
     fontSize: 16,
     color: '#666',
-  },
-  metaValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
+    textAlign: 'center',
+    marginBottom: 40,
   },
   button: {
     backgroundColor: '#007AFF',
+    paddingHorizontal: 32,
     paddingVertical: 16,
     borderRadius: 12,
+    minWidth: 200,
+    alignItems: 'center',
   },
   buttonDisabled: {
-    backgroundColor: '#ccc',
+    opacity: 0.6,
   },
   buttonText: {
     color: '#fff',
     fontSize: 18,
     fontWeight: '600',
+  },
+  errorContainer: {
+    backgroundColor: '#ffebee',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 24,
+    maxWidth: 300,
+  },
+  errorText: {
+    color: '#c62828',
+    fontSize: 14,
     textAlign: 'center',
+  },
+  secondaryButton: {
+    marginTop: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  secondaryButtonText: {
+    color: '#374151',
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

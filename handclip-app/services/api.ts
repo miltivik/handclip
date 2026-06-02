@@ -172,6 +172,26 @@ export const api = {
   // ---- Analysis ----
   analyze: (projectId: string, videoUrl: string) =>
     post<AnalyzeResponse>(`/projects/${projectId}/analyze`, { videoUrl }),
+
+  uploadVideoFile: async (file: {
+    uri: string;
+    fileName: string;
+    mimeType: string;
+    fileSize: number;
+  }) => {
+    const form = new FormData();
+    form.append('video', {
+      uri: file.uri,
+      name: file.fileName,
+      type: file.mimeType,
+    } as unknown as Blob);
+    form.append('name', file.fileName.replace(/\.[^/.]+$/, ''));
+    return post<{ projectId: string; videoUrl: string }>(
+      '/projects/upload',
+      form,
+      true,
+    );
+  },
   // ---- Uploads ----
   getUploadUrl: (filename: string, contentType: string) =>
     post<UploadResponse>('/uploads/url', { filename, content_type: contentType }),

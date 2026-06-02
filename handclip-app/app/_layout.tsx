@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
 import { Stack } from 'expo-router';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useAuthStore } from '../stores/auth.store';
-import { registerForPushNotifications } from '../services/notifications';
 
 function AuthProvider({ children }: { children: React.ReactNode }) {
   const initAuth = useAuthStore((state) => state.initAuth);
@@ -15,9 +15,13 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [initAuth]);
 
   useEffect(() => {
-    if (user?.id) {
-      registerForPushNotifications(user.id);
+    if (!user?.id || Constants.executionEnvironment === ExecutionEnvironment.StoreClient) {
+      return;
     }
+
+    import('../services/notifications').then(({ registerForPushNotifications }) => {
+      registerForPushNotifications(user.id);
+    });
   }, [user?.id]);
 
   return children;
@@ -28,13 +32,7 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <AuthProvider>
         <StatusBar style="auto" />
-        <Stack>
-          <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="import" options={{ headerShown: false }} />
-          <Stack.Screen name="project" options={{ headerShown: false }} />
-          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-        </Stack>
+        <Stack screenOptions={{ headerShown: false }} />
       </AuthProvider>
     </SafeAreaProvider>
   );

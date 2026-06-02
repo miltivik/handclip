@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { FlatList, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { api, Project } from '../../services/api';
+import { useAuthStore } from '../../stores/auth.store';
 import EmptyState from '../../components/ui/EmptyState';
 
 interface ProjectCardProps {
@@ -35,11 +36,17 @@ function ProjectCard({ project, onPress }: ProjectCardProps) {
 
 export default function HomeTab() {
   const router = useRouter();
+  const isAnonymous = useAuthStore((state) => state.isAnonymous);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(!isAnonymous);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (isAnonymous) {
+      setProjects([]);
+      setIsLoading(false);
+      return;
+    }
     api.getProjects()
       .then((data) => {
         setProjects(data);
@@ -51,10 +58,14 @@ export default function HomeTab() {
       .finally(() => {
         setIsLoading(false);
       });
-  }, []);
+  }, [isAnonymous]);
 
   const handleProjectPress = (projectId: string) => {
     router.push(`/project/${projectId}`);
+  };
+
+  const handleImportVideo = () => {
+    router.push('/import');
   };
 
   const handleRetry = () => {
@@ -72,6 +83,28 @@ export default function HomeTab() {
         setIsLoading(false);
       });
   };
+
+  if (isAnonymous) {
+    return (
+      <View style={styles.centerContainer}>
+        <EmptyState
+          icon="folder-outline"
+          title="Modo exploracion"
+          subtitle="Crea una cuenta para guardar proyectos y usar analisis IA."
+          ctaLabel="Crear cuenta o iniciar sesion"
+          onCtaPress={() => router.push('/(auth)/login')}
+        />
+        <TouchableOpacity
+          style={styles.importButton}
+          onPress={handleImportVideo}
+          accessibilityLabel="Explorar importacion"
+          accessibilityRole="button"
+        >
+          <Text style={styles.importButtonText}>Explorar importacion</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -103,6 +136,8 @@ export default function HomeTab() {
           icon="folder-outline"
           title="Sin proyectos"
           subtitle="Crea tu primer proyecto para comenzar."
+          ctaLabel="Importar video"
+          onCtaPress={handleImportVideo}
         />
       </View>
     );
@@ -112,6 +147,14 @@ export default function HomeTab() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Proyectos</Text>
+        <TouchableOpacity
+          style={styles.importButton}
+          onPress={handleImportVideo}
+          accessibilityLabel="Importar video"
+          accessibilityRole="button"
+        >
+          <Text style={styles.importButtonText}>Importar</Text>
+        </TouchableOpacity>
       </View>
       <FlatList
         data={projects}
@@ -141,6 +184,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
@@ -149,6 +195,17 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: '#1a1a1a',
+  },
+  importButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  importButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   list: {
     padding: 16,

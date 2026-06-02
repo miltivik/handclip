@@ -10,6 +10,8 @@ import SubtitleEditor from '../../../components/editor/SubtitleEditor';
 import { useEditorStore } from '../../../stores/editor.store';
 import { useProjectStore } from '../../../stores/project.store';
 import { useAppVideoPlayer } from '../../../hooks/useVideoPlayer';
+import { useAuthStore } from '../../../stores/auth.store';
+import { showAccountRequired } from '../../../lib/account-required';
 import { api } from '../../../services/api';
 interface EditingSubtitle {
   index: number;
@@ -74,6 +76,11 @@ export default function EditScreen() {
 
   const handleExport = async () => {
     if (!id || !clipId) return;
+    const isAnonymous = useAuthStore.getState().isAnonymous;
+    if (isAnonymous) {
+      showAccountRequired();
+      return;
+    }
 
     try {
       const result = await api.createExportJob(id, clipId, preset);
