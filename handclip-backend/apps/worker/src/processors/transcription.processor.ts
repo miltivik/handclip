@@ -19,6 +19,7 @@ interface WhisperWord {
 
 interface TranscriptionJobData {
   projectId: string;
+  userId: string;
   videoUrl: string;
 }
 
@@ -177,6 +178,7 @@ export class TranscriptionProcessor extends WorkerHost {
 
       await clipQueue.add('analyze-clips', {
         projectId,
+        userId: job.data.userId,
         videoUrl,
         transcriptionSegments: segments,
       });

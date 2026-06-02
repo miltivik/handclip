@@ -164,4 +164,49 @@ describe('ProviderManager subscription selection', () => {
         }),
     ).toThrow('Invalid HANDCLIP_LLM_PROVIDER: random-provider');
   });
+
+  it('uses the user-specific active OAuth provider when requested', async () => {
+    const databaseStore = {
+      getActiveApiKey: vi.fn(async () => ({
+        apiKey: 'user-token',
+        provider: 'openai-codex' as const,
+        resultProvider: 'openai-codex' as const,
+      })),
+    };
+    const piAdapter = { call: vi.fn(async () => result('openai-codex')) };
+    const manager = new ProviderManager({
+      env: { HANDCLIP_LLM_PROVIDER: 'api-key' },
+      databaseOAuthCredentialsStore: databaseStore,
+      piAdapter,
+      openAiCaller: vi.fn(),
+    });
+
+    await expect(manager.callWithUserProvider(task, 'user-1')).resolves.toEqual(
+      result('openai-codex'),
+    );
+    expect(databaseStore.getActiveApiKey).toHaveBeenCalledWith('user-1');
+    expect(piAdapter.call).toHaveBeenCalledWith({
+      provider: 'openai-codex',
+      resultProvider: 'openai-codex',
+      model: 'gpt-5.3-codex',
+      apiKey: 'user-token',
+      task,
+    });
+  });
+
+  it('throws when no active OAuth connection exists for the user', async () => {
+    const databaseStore = {
+      getActiveApiKey: vi.fn(async () => null),
+    };
+    const manager = new ProviderManager({
+      env: {},
+      databaseOAuthCredentialsStore: databaseStore,
+      piAdapter: { call: vi.fn() },
+      openAiCaller: vi.fn(),
+    });
+
+    await expect(manager.callWithUserProvider(task, 'user-1')).rejects.toThrow(
+      'No active OAuth connection found for user',
+    );
+  });
 });

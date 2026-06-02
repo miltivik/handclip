@@ -37,6 +37,14 @@ interface OAuthCredentialsReader {
   getApiKey(provider: string): Promise<string | null>;
 }
 
+interface DatabaseOAuthCredentialsReader {
+  getActiveApiKey(userId: string): Promise<{
+    apiKey: string;
+    provider: 'openai-codex' | 'anthropic';
+    resultProvider: 'openai-codex' | 'anthropic-subscription';
+  } | null>;
+}
+
 interface PiProviderCaller {
   call(request: {
     provider: 'openai-codex' | 'anthropic';
@@ -52,6 +60,7 @@ type OpenAiCaller = (provider: ProviderConfig, task: StageTask) => Promise<Provi
 export interface ProviderManagerOptions {
   env?: NodeJS.ProcessEnv;
   oauthCredentialsStore?: OAuthCredentialsReader;
+  databaseOAuthCredentialsStore?: DatabaseOAuthCredentialsReader;
   piAdapter?: PiProviderCaller;
   openAiCaller?: OpenAiCaller;
 }
@@ -126,6 +135,7 @@ export class ProviderManager {
   private readonly selection: LlmProviderSelection;
   private readonly allowApiKeyFallback: boolean;
   private readonly oauthCredentialsStore: OAuthCredentialsReader;
+  private readonly databaseOAuthCredentialsStore?: DatabaseOAuthCredentialsReader;
   private readonly piAdapter: PiProviderCaller;
   private readonly openAiCaller: OpenAiCaller;
   private byokConfig: { enabled: boolean; provider: ApiKeyProviderName; apiKey: string } | null =
@@ -148,6 +158,7 @@ export class ProviderManager {
           return piAiOAuth.getOAuthApiKey(provider, credentials);
         },
       );
+    this.databaseOAuthCredentialsStore = options.databaseOAuthCredentialsStore;
   }
 
   enableBYOK(provider: ApiKeyProviderName, apiKey: string) {
@@ -158,6 +169,26 @@ export class ProviderManager {
 
   disableBYOK() {
     this.byokConfig = null;
+  }
+
+  async callWithUserProvider(task: StageTask, userId: string): Promise<ProviderResult> {
+    if (!this.databaseOAuthCredentialsStore) {
+      throw new Error('No database OAuth credentials store configured');
+    }
+    const selected = await this.databaseOAuthCredentialsStore.getActiveApiKey(userId);
+    if (!selected) {
+      throw new Error('No active OAuth connection found for user');
+    }
+    return this.piAdapter.call({
+      provider: selected.provider,
+      resultProvider: selected.resultProvider,
+      model:
+        selected.provider === 'openai-codex'
+          ? this.env.HANDCLIP_CODEX_MODEL || 'gpt-5.3-codex'
+          : this.env.HANDCLIP_ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+      apiKey: selected.apiKey,
+      task,
+    }) as Promise<ProviderResult>;
   }
 
   async callWithFallback(task: StageTask): Promise<ProviderResult> {

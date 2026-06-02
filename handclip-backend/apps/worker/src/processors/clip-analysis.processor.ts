@@ -1,8 +1,10 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { ClipCandidate, ClipCandidateSchema, SubtitleSegment } from '@handclip/shared';
+import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../modules/supabase/supabase.service';
-import { providerManager, StageTask } from '../providers/provider-manager';
+import { DatabaseOAuthCredentialsStore } from '../providers/database-oauth-credentials.store';
+import { ProviderManager, StageTask } from '../providers/provider-manager';
 const CLIP_ANALYSIS_SYSTEM_PROMPT = `Eres un analista de contenido para redes sociales. Tu tarea es identificar los mejores momentos de una transcripción de video para crear clips cortos virales (TikTok, Reels, Shorts).
 
 Analiza la transcripción y devuelve un JSON con este formato exacto:
@@ -63,6 +65,7 @@ const VALID_MOOD_TAGS = new Set([
 
 interface ClipAnalysisJobData {
   projectId: string;
+  userId: string;
   videoUrl: string;
   transcriptionSegments?: SubtitleSegment[];
 }
@@ -156,12 +159,23 @@ function parseAndValidateClips(content: string): ClipCandidate[] {
 
 @Processor('clip-analysis')
 export class ClipAnalysisProcessor extends WorkerHost {
-  constructor(private readonly supabaseService: SupabaseService) {
+  private readonly providerManager: ProviderManager;
+
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    config: ConfigService,
+  ) {
     super();
+    const encryptionKey = config.getOrThrow<string>('AI_CONNECTIONS_ENCRYPTION_KEY');
+    const databaseStore = new DatabaseOAuthCredentialsStore(
+      supabaseService.getServiceRoleClient(),
+      encryptionKey,
+    );
+    this.providerManager = new ProviderManager({ databaseOAuthCredentialsStore: databaseStore });
   }
 
   async process(job: Job<ClipAnalysisJobData>): Promise<{ clips: ClipCandidate[] }> {
-    const { projectId, transcriptionSegments } = job.data;
+    const { projectId, userId, transcriptionSegments } = job.data;
     const supabase = this.supabaseService.getServiceRoleClient();
 
     // Create job record in DB
@@ -226,7 +240,7 @@ export class ClipAnalysisProcessor extends WorkerHost {
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const result = await providerManager.callWithFallback(task);
+        const result = await this.providerManager.callWithUserProvider(task, userId);
 
         if (dbJobId) {
           await supabase.from('jobs').update({ progress: 60 }).eq('id', dbJobId);
