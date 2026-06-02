@@ -6,11 +6,14 @@ import {
   Param,
   Body,
   UseInterceptors,
+  UseGuards,
   UploadedFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ProjectsService } from './projects.service';
 import { JobsService } from '../jobs/jobs.service';
+import { BearerUserGuard } from '../auth/bearer-user.guard';
+import { CurrentUser, ResolvedUser } from '../auth/current-user.decorator';
 
 @Controller('projects')
 export class ProjectsController {
@@ -83,11 +86,14 @@ export class ProjectsController {
   }
 
   @Post(':id/analyze')
+  @UseGuards(BearerUserGuard)
   async analyze(
+    @CurrentUser() user: ResolvedUser,
     @Param('id') id: string,
     @Body() body: { videoUrl: string },
   ) {
-    const result = await this.jobsService.enqueueAnalysis(id, body.videoUrl);
+    await this.projectsService.assertOwnedBy(id, user.id);
+    const result = await this.jobsService.enqueueAnalysis(id, user.id, body.videoUrl);
     return { jobId: result.jobId };
   }
 

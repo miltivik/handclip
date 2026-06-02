@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 
 export interface Project {
@@ -217,5 +217,19 @@ export class ProjectsService {
     } catch {
       return null;
     }
+  }
+
+  async assertOwnedBy(projectId: string, userId: string): Promise<Project> {
+    const { data, error } = await this.supabaseService
+      .getServiceRoleClient()
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .eq('user_id', userId)
+      .single();
+    if (error || !data) {
+      throw new NotFoundException('Project not found');
+    }
+    return data as Project;
   }
 }

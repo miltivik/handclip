@@ -6,6 +6,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 
 interface AnalysisJob {
   projectId: string;
+  userId: string;
   videoUrl: string;
 }
 
@@ -72,10 +73,10 @@ export class JobsService {
     return { jobId: jobsRow.id };
   }
 
-  async enqueueAnalysis(projectId: string, videoUrl: string) {
+  async enqueueAnalysis(projectId: string, userId: string, videoUrl: string) {
     const transcriptionJob = await this.transcriptionQueue.add(
       'transcribe',
-      { projectId, videoUrl } as AnalysisJob,
+      { projectId, userId, videoUrl } as AnalysisJob,
       {
         attempts: 3,
         backoff: {
