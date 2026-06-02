@@ -42,3 +42,5 @@ pnpm-debug.log*
 
 # Misc
 *.tsbuildinfo
+handclip-backend/apps/worker/.local/*
+!handclip-backend/apps/worker/.local/.gitkeep
