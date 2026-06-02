@@ -49,6 +49,26 @@ export interface JobProgress {
   result?: Record<string, unknown>;
 }
 
+export type AiProvider = 'openai-codex' | 'anthropic';
+
+export interface AiConnection {
+  provider: AiProvider;
+  isActive: boolean;
+  connectedAt: string;
+}
+
+export interface OAuthAttempt {
+  id: string;
+  provider: AiProvider;
+  status: 'initializing' | 'awaiting-user' | 'connected' | 'failed' | 'cancelled' | 'expired';
+  authorizationUrl?: string;
+  userCode?: string;
+  verificationUri?: string;
+  intervalSeconds?: number;
+  expiresAt: string;
+  error?: string;
+}
+
 // =============================================================================
 // Core HTTP helpers
 // =============================================================================
@@ -81,6 +101,33 @@ async function post<T>(
     body: multipart ? (body as FormData) : JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`POST ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+async function patch<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const url = `${API_BASE}${path}`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(await authHeaders()),
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`PATCH ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+async function del<T>(path: string): Promise<T> {
+  const url = `${API_BASE}${path}`;
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(await authHeaders()),
+    },
+  });
+  if (!res.ok) throw new Error(`DELETE ${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }
 
@@ -155,6 +202,19 @@ export const api = {
   // ---- Health ----
   checkHealth: () =>
     get<{ status: string; timestamp: string; checks: Record<string, string> }>('/health'),
+
+  // ---- AI provider connections ----
+  getAiConnections: () => get<AiConnection[]>('/ai-connections'),
+  startAiConnection: (provider: AiProvider) =>
+    post<OAuthAttempt>(`/ai-connections/${provider}/start`, {}),
+  getAiConnectionAttempt: (provider: AiProvider, id: string) =>
+    get<OAuthAttempt>(`/ai-connections/${provider}/attempts/${id}`),
+  submitAiConnectionInput: (provider: AiProvider, id: string, input: string) =>
+    post<OAuthAttempt>(`/ai-connections/${provider}/attempts/${id}/input`, { input }),
+  setActiveAiConnection: (provider: AiProvider) =>
+    patch<void>('/ai-connections/active', { provider }),
+  disconnectAiConnection: (provider: AiProvider) =>
+    del<void>(`/ai-connections/${provider}`),
 
   // ---- Auth store helpers (delegated) ----
   auth: {
