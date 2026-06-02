@@ -11,3 +11,6 @@ export * from './schemas/edit-action.schema';
 export * from './schemas/subtitle-segment.schema';
 // Constants
 export * from './constants';
+// AI connection shared utilities
+export * from './ai-connections/types';
+export * from './ai-connections/credentials-crypto';

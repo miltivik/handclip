@@ -171,3 +171,23 @@ create policy "Users can read own exports" on storage.objects
 
 -- Bucket: thumbnails (público)
 insert into storage.buckets (id, name, public) values ('thumbnails', 'thumbnails', true);
+
+-- ============================================================
+-- 7. AI PROVIDER CONNECTIONS (mobile subscription OAuth)
+-- ============================================================
+
+create table if not exists public.ai_provider_connections (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  provider text not null check (provider in ('openai-codex', 'anthropic')),
+  credentials_ciphertext text not null,
+  credentials_iv text not null,
+  credentials_tag text not null,
+  is_active boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, provider)
+);
+create unique index if not exists idx_ai_provider_connections_one_active
+  on public.ai_provider_connections(user_id) where is_active;
+alter table public.ai_provider_connections enable row level security;
