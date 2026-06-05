@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TranscriptionProcessor } from './transcription.processor';
 import { ClipAnalysisProcessor } from './clip-analysis.processor';
 import { RenderProcessor } from './render.processor';
+import { CleanupProcessor } from './cleanup.processor';
 import { SupabaseModule } from '../modules/supabase/supabase.module';
 
 @Module({
@@ -14,8 +15,9 @@ import { SupabaseModule } from '../modules/supabase/supabase.module';
       { name: 'transcription' },
       { name: 'clip-analysis' },
       { name: 'render' },
+      { name: 'cleanup' },
     ),
   ],
-  providers: [TranscriptionProcessor, ClipAnalysisProcessor, RenderProcessor],
+  providers: [TranscriptionProcessor, ClipAnalysisProcessor, RenderProcessor, CleanupProcessor],
 })
 export class ProcessorsModule {}

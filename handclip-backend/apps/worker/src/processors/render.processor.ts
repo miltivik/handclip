@@ -23,6 +23,8 @@ interface RenderJobData {
   musicFadeOut?: number;
   preset: 'tiktok' | 'reels' | 'shorts' | 'draft' | 'hq';
   clipId?: string;
+  speed?: 0.5 | 1 | 2;
+  textOverlay?: { text: string; position: 'top' | 'center' | 'bottom' } | null;
 }
 
 interface SubtitleSegment {
@@ -40,6 +42,24 @@ const PRESETS = {
   draft:    { width: 720,  height: 1280, videoBitrate: '2M',  audioBitrate: '96k',  crf: 28, preset: 'ultrafast' },
   hq:       { width: 1080, height: 1920, videoBitrate: '20M', audioBitrate: '256k', crf: 15, preset: 'slow' },
 };
+/** Escape text for FFmpeg drawtext filter */
+export function escapeDrawtextText(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')   // backslash first
+    .replace(/'/g, "\\'")     // single quote
+    .replace(/%/g, '%%')      // percent (FFmpeg expansion)
+    .replace(/\r/g, ' ')      // CR -> space (prevent filtergraph break)
+    .replace(/\n/g, ' ');     // LF -> space (prevent filtergraph break)
+}
+/** Map position to FFmpeg drawtext y coordinate */
+export function getDrawtextY(position: string): string {
+  switch (position) {
+    case 'top':    return '80';
+    case 'center': return '(h-text_h)/2';
+    case 'bottom': return 'h-text_h-160'; // above subtitle margin
+    default:       return 'h-text_h-160';
+  }
+}
 
 @Processor('render')
 export class RenderProcessor extends WorkerHost {
@@ -49,6 +69,8 @@ export class RenderProcessor extends WorkerHost {
 
   async process(job: Job<RenderJobData>): Promise<{ outputUrl: string }> {
     const { projectId, userId, videoUrl, trimStart, trimEnd, subtitles, musicUrl, musicVolume, musicFadeIn, musicFadeOut, preset, clipId } = job.data;
+    const speed = (job.data.speed && [0.5, 1, 2].includes(job.data.speed)) ? job.data.speed : 1;
+    const textOverlay = job.data.textOverlay || null;
     const config = PRESETS[preset] || PRESETS.tiktok;
     const supabase = this.supabaseService.getServiceRoleClient();
 
@@ -149,11 +171,13 @@ export class RenderProcessor extends WorkerHost {
         musicFadeIn,
         musicFadeOut,
         outputPath,
+        speed,
+        textOverlay,
       });
-
       if (dbJobId) await supabase.from('jobs').update({ progress: 30 }).eq('id', dbJobId);
       await job.updateProgress(30);
-      console.log(`[Render] FFmpeg: ${cmd}`);
+      console.log(`[Render] FFmpeg started for project ${projectId}, preset ${preset}, speed ${speed}`);
+
 
       // Step 5: Execute FFmpeg with codec fallback
       const codecFallbacks = [
@@ -178,6 +202,8 @@ export class RenderProcessor extends WorkerHost {
           codec: fb.codec,
           preset: fb.preset,
           crf: fb.crf,
+          speed,
+          textOverlay,
         });
         try {
           await execAsync(attemptCmd, { timeout: 300000 });
@@ -248,7 +274,7 @@ export class RenderProcessor extends WorkerHost {
         );
         duration = parseFloat(stdout.trim()) || null;
       } catch {
-        duration = trimEnd - trimStart; // fallback
+        duration = (trimEnd - trimStart) / speed; // fallback accounts for speed
       }
 
       // Update export record
@@ -375,21 +401,31 @@ export class RenderProcessor extends WorkerHost {
     codec?: string;
     preset?: string;
     crf?: number;
+    speed?: number;
+    textOverlay?: { text: string; position: string } | null;
   }): string {
-    const { inputPath, srtPath, musicPath, trimStart, trimEnd, config, musicVolume, musicFadeIn, musicFadeOut, outputPath, codec, preset, crf } = opts;
+    const { inputPath, srtPath, musicPath, trimStart, trimEnd, config, musicVolume, musicFadeIn, musicFadeOut, outputPath, codec, preset, crf, speed = 1, textOverlay = null } = opts;
     const duration = trimEnd - trimStart;
-
+    const outputDuration = duration / speed;
     // Filter chain for video
     const videoFilters: string[] = [];
 
     // Trim
     videoFilters.push(`trim=start=${trimStart}:duration=${duration},setpts=PTS-STARTPTS`);
-
+    // Speed adjustment
+    if (speed !== 1) {
+      videoFilters.push(`setpts=PTS/${speed}`);
+    }
     // Scale + crop to 9:16
     videoFilters.push(`scale=${config.width}:${config.height}:force_original_aspect_ratio=increase`);
     videoFilters.push(`crop=${config.width}:${config.height}`);
     videoFilters.push(`setsar=1`);
-
+    // Text overlay (before subtitles so subtitles render on top)
+    if (textOverlay && textOverlay.text) {
+      const escaped = escapeDrawtextText(textOverlay.text);
+      const y = getDrawtextY(textOverlay.position);
+      videoFilters.push(`drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontcolor=white:fontsize=56:borderw=3:bordercolor=black`);
+    }
     // Subtitle overlay
     if (srtPath) {
       videoFilters.push(`subtitles='${srtPath}':force_style='Fontname=Arial,Fontsize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=40'`);
@@ -410,22 +446,25 @@ export class RenderProcessor extends WorkerHost {
     filterParts.push(`[0:v]${videoFilterStr}[vout]`);
 
     // Audio: trim original audio
-    const fadeOutStart = Math.max(0, duration - 0.5);
-    filterParts.push(`[0:a]atrim=start=${trimStart}:duration=${duration},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.1,afade=t=out:st=${fadeOutStart}:d=0.5[vaudio]`);
-
+    const fadeOutStart = Math.max(0, outputDuration - 0.5);
+    let audioChain = `atrim=start=${trimStart}:duration=${duration},asetpts=PTS-STARTPTS`;
+    if (speed !== 1) {
+      audioChain += `,atempo=${speed}`;
+    }
+    audioChain += `,afade=t=in:st=0:d=0.1,afade=t=out:st=${fadeOutStart}:d=0.5`;
+    filterParts.push(`[0:a]${audioChain}[vaudio]`);
     if (musicPath && musicVolume !== undefined) {
       // Music processing
       let musicChain = `[1:a]atrim=start=0:duration=${duration},asetpts=PTS-STARTPTS`;
-
       // Volume (0-200%, default 30% when there's voice)
       const vol = musicVolume !== undefined ? musicVolume / 100 : 0.3;
       musicChain += `,volume=${vol}`;
-
-      // Fade
+      // Fade - use outputDuration for timing
       musicChain += `,afade=t=in:st=0:d=${musicFadeIn || 0.5}`;
-      musicChain += `,afade=t=out:st=${duration - (musicFadeOut || 0.5)}:d=${musicFadeOut || 0.5}`;
+      musicChain += `,afade=t=out:st=${outputDuration - (musicFadeOut || 0.5)}:d=${musicFadeOut || 0.5}`;
       musicChain += `[m audio]`;
       filterParts.push(musicChain);
+
 
       // Mix voice + music
       filterParts.push(`[vaudio][m audio]amix=inputs=2:duration=first:dropout_transition=2,volume=1.2[aout]`);

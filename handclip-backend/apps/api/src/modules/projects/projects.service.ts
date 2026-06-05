@@ -1,5 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+
+interface ProjectRow {
+  id: string;
+  title: string;
+  description?: string | null;
+  user_id: string;
+  source_video_url?: string | null;
+  source_duration?: number | null;
+  status?: string;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface Project {
   id: string;
@@ -7,6 +19,8 @@ export interface Project {
   description?: string;
   userId: string;
   sourceVideoUrl?: string;
+  sourceDuration?: number;
+  status?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -26,22 +40,27 @@ export const MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024;
 export class ProjectsService {
   constructor(private readonly supabaseService: SupabaseService) {}
 
-  async create(params: {
-    name: string;
-    description?: string;
-    sourceVideoUrl?: string;
-    duration?: number;
-    width?: number;
-    height?: number;
-  }): Promise<Project> {
-    const client = this.supabaseService.getClient();
-    const user = await this.getCurrentUser();
-
-    const { data, error } = await client
+  async create(
+    userId: string,
+    params: {
+      name: string;
+      description?: string;
+      sourceVideoUrl?: string;
+      duration?: number;
+      width?: number;
+      height?: number;
+    },
+  ): Promise<Project> {
+    if (params.sourceVideoUrl && !params.sourceVideoUrl.startsWith(`${userId}/`)) {
+      throw new BadRequestException('Video path must belong to authenticated user');
+    }
+    const { data, error } = await this.supabaseService
+      .getServiceRoleClient()
       .from('projects')
       .insert({
         title: params.name,
-        user_id: user?.id || 'anonymous',
+        description: params.description || null,
+        user_id: userId,
         source_video_url: params.sourceVideoUrl || null,
         source_duration: params.duration || null,
         metadata: params.width && params.height
@@ -52,50 +71,43 @@ export class ProjectsService {
       .select()
       .single();
 
-    if (error) {
-      throw new Error(error.message);
+    if (error || !data) {
+      throw new Error(error?.message || 'Failed to create project');
     }
 
-    return data as Project;
+    return this.mapProject(data as ProjectRow);
   }
 
-  async findAll(): Promise<Project[]> {
-    const client = this.supabaseService.getClient();
-    const user = await this.getCurrentUser();
-
-    const { data, error } = await client
+  async findAll(userId: string): Promise<Project[]> {
+    const { data, error } = await this.supabaseService
+      .getServiceRoleClient()
       .from('projects')
       .select('*')
-      .eq('user_id', user?.id || 'anonymous')
+      .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
     if (error) {
       throw new Error(error.message);
     }
 
-    return (data || []) as Project[];
+    return (data || []).map((row) => this.mapProject(row as ProjectRow));
   }
 
-  async findOne(id: string): Promise<Project> {
-    const client = this.supabaseService.getClient();
+  async findOne(id: string, userId: string): Promise<Project> {
+    const row = await this.assertOwnedBy(id, userId);
+    const sourceVideoUrl = row.source_video_url
+      ? await this.signStoragePath(row.source_video_url)
+      : undefined;
+    return this.mapProject(row, sourceVideoUrl);
+  }
 
-    const { data, error } = await client
+  async remove(id: string, userId: string): Promise<void> {
+    const { error } = await this.supabaseService
+      .getServiceRoleClient()
       .from('projects')
-      .select('*')
+      .delete()
       .eq('id', id)
-      .single();
-
-    if (error) {
-      throw new Error(error.message);
-    }
-
-    return data as Project;
-  }
-
-  async remove(id: string): Promise<void> {
-    const client = this.supabaseService.getClient();
-
-    const { error } = await client.from('projects').delete().eq('id', id);
+      .eq('user_id', userId);
 
     if (error) {
       throw new Error(error.message);
@@ -106,29 +118,23 @@ export class ProjectsService {
     file: Express.Multer.File,
     userId: string,
     projectId: string,
-  ): Promise<{ videoUrl: string }> {
-    // Validar formato
+  ): Promise<{ storagePath: string; videoUrl: string }> {
     if (!ALLOWED_VIDEO_MIMETYPES.includes(file.mimetype)) {
       throw new Error(
         `Formato no soportado. Usa MP4, MOV, WEBM, M4V o MKV. Recibido: ${file.mimetype}`,
       );
     }
 
-    // Validar tamaño
     if (file.size > MAX_VIDEO_SIZE_BYTES) {
       throw new Error(
-        `El video excede el tamaño máximo de ${MAX_VIDEO_SIZE_MB} MB. Tamaño recibido: ${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+        `El video excede el tamano maximo de ${MAX_VIDEO_SIZE_MB} MB. Tamano recibido: ${(file.size / (1024 * 1024)).toFixed(2)} MB`,
       );
     }
 
-    const client = this.supabaseService.getClient();
-
-    // Determinar extensión del archivo
+    const client = this.supabaseService.getServiceRoleClient();
     const extension = this.getExtensionFromMimeType(file.mimetype);
     const storagePath = `${userId}/${projectId}/input.${extension}`;
-
-    // Subir a Supabase Storage
-    const { data, error } = await client.storage
+    const { error } = await client.storage
       .from('source-videos')
       .upload(storagePath, file.buffer, {
         contentType: file.mimetype,
@@ -139,56 +145,78 @@ export class ProjectsService {
       throw new Error(`Error al subir el video: ${error.message}`);
     }
 
-    // Obtener URL pública
-    const { data: urlData } = client.storage
-      .from('source-videos')
-      .getPublicUrl(storagePath);
-
-    return { videoUrl: urlData.publicUrl };
+    return {
+      storagePath,
+      videoUrl: await this.signStoragePath(storagePath),
+    };
   }
 
-  async getSignedVideoUrl(projectId: string): Promise<string> {
-    const client = this.supabaseService.getClient();
-    const user = await this.getCurrentUser();
-
-    if (!user) {
-      throw new Error('No se pudo identificar al usuario');
+  async getSignedVideoUrl(projectId: string, userId: string): Promise<string> {
+    const project = await this.assertOwnedBy(projectId, userId);
+    if (!project.source_video_url) {
+      throw new Error('Video no encontrado para este proyecto');
     }
-
-    // Obtener info del proyecto para construir la ruta
-    const project = await this.findOne(projectId);
-    const extension = 'mp4'; // extensión por defecto, se puede mejorar
-    const storagePath = `${project.userId || user.id}/${projectId}/input.${extension}`;
-
-    const { data, error } = await client.storage
-      .from('source-videos')
-      .createSignedUrl(storagePath, 3600); // 1 hora
-
-    if (error) {
-      throw new Error(`Error al generar URL firmada: ${error.message}`);
+    if (!project.source_video_url.startsWith(`${userId}/`)) {
+      throw new NotFoundException('Video not found');
     }
-
-    if (!data.signedUrl) {
-      throw new Error('No se pudo generar la URL firmada');
-    }
-
-    return data.signedUrl;
+    return this.signStoragePath(project.source_video_url);
   }
 
   async uploadAndCreateProject(
     file: Express.Multer.File,
     name: string,
+    userId: string,
   ): Promise<{ projectId: string; videoUrl: string }> {
-    const user = await this.getCurrentUser();
-    const userId = user?.id || 'anonymous';
+    const project = await this.create(userId, { name });
+    const { storagePath, videoUrl } = await this.uploadVideo(file, userId, project.id);
+    const { error } = await this.supabaseService
+      .getServiceRoleClient()
+      .from('projects')
+      .update({
+        source_video_url: storagePath,
+        status: 'uploaded',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', project.id)
+      .eq('user_id', userId);
 
-    // Crear proyecto primero para obtener el ID
-    const project = await this.create({ name });
-
-    // Subir video
-    const { videoUrl } = await this.uploadVideo(file, userId, project.id);
+    if (error) {
+      throw new Error(`Error al guardar la ruta del video: ${error.message}`);
+    }
 
     return { projectId: project.id, videoUrl };
+  }
+
+  async getVideoUrl(projectId: string, userId: string): Promise<string> {
+    return this.getSignedVideoUrl(projectId, userId);
+  }
+
+  async assertOwnedBy(projectId: string, userId: string): Promise<ProjectRow> {
+    const { data, error } = await this.supabaseService
+      .getServiceRoleClient()
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .eq('user_id', userId)
+      .single();
+    if (error || !data) {
+      throw new NotFoundException('Project not found');
+    }
+    return data as ProjectRow;
+  }
+
+  private async signStoragePath(storagePath: string): Promise<string> {
+    const { data, error } = await this.supabaseService
+      .getServiceRoleClient()
+      .storage
+      .from('source-videos')
+      .createSignedUrl(storagePath, 3600);
+
+    if (error || !data?.signedUrl) {
+      throw new Error(`Error al generar URL firmada: ${error?.message || 'signed URL missing'}`);
+    }
+
+    return data.signedUrl;
   }
 
   private getExtensionFromMimeType(mimetype: string): string {
@@ -201,35 +229,18 @@ export class ProjectsService {
     };
     return extensionMap[mimetype] || 'mp4';
   }
-  async getVideoUrl(projectId: string): Promise<string> {
-    const project = await this.findOne(projectId);
-    if (!project.sourceVideoUrl) {
-      throw new Error('Video no encontrado para este proyecto');
-    }
-    return this.getSignedVideoUrl(projectId);
-  }
 
-  async getCurrentUser(): Promise<{ id: string } | null> {
-    try {
-      const client = this.supabaseService.getClient();
-      const { data } = await client.auth.getUser();
-      return data.user;
-    } catch {
-      return null;
-    }
-  }
-
-  async assertOwnedBy(projectId: string, userId: string): Promise<Project> {
-    const { data, error } = await this.supabaseService
-      .getServiceRoleClient()
-      .from('projects')
-      .select('*')
-      .eq('id', projectId)
-      .eq('user_id', userId)
-      .single();
-    if (error || !data) {
-      throw new NotFoundException('Project not found');
-    }
-    return data as Project;
+  private mapProject(row: ProjectRow, sourceVideoUrl = row.source_video_url || undefined): Project {
+    return {
+      id: row.id,
+      name: row.title,
+      description: row.description || undefined,
+      userId: row.user_id,
+      sourceVideoUrl,
+      sourceDuration: row.source_duration || undefined,
+      status: row.status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
   }
 }

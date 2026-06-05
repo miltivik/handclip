@@ -68,6 +68,7 @@ interface ClipAnalysisJobData {
   userId: string;
   videoUrl: string;
   transcriptionSegments?: SubtitleSegment[];
+  trackingJobId?: string;
 }
 
 function buildUserPrompt(segments: SubtitleSegment[]): string {
@@ -175,21 +176,29 @@ export class ClipAnalysisProcessor extends WorkerHost {
   }
 
   async process(job: Job<ClipAnalysisJobData>): Promise<{ clips: ClipCandidate[] }> {
-    const { projectId, userId, transcriptionSegments } = job.data;
+    const { projectId, userId, transcriptionSegments, trackingJobId } = job.data;
     const supabase = this.supabaseService.getServiceRoleClient();
+    const dbProgress = (progress: number) =>
+      trackingJobId ? 60 + Math.round(progress * 0.4) : progress;
 
-    // Create job record in DB
-    const { data: jobRecord, error: jobCreateError } = await supabase
-      .from('jobs')
-      .insert({
-        project_id: projectId,
-        type: 'clip_analysis',
-        status: 'active',
-        progress: 10,
-        bullmq_id: job.id,
-      })
-      .select('id')
-      .single();
+    const { data: jobRecord, error: jobCreateError } = trackingJobId
+      ? await supabase
+          .from('jobs')
+          .update({ status: 'active', progress: dbProgress(10), bullmq_id: job.id })
+          .eq('id', trackingJobId)
+          .select('id')
+          .single()
+      : await supabase
+          .from('jobs')
+          .insert({
+            project_id: projectId,
+            type: 'clip_analysis',
+            status: 'active',
+            progress: 10,
+            bullmq_id: job.id,
+          })
+          .select('id')
+          .single();
 
     if (jobCreateError) {
       console.error(`[ClipAnalysis] Failed to create job record: ${jobCreateError.message}`);
@@ -204,7 +213,7 @@ export class ClipAnalysisProcessor extends WorkerHost {
       if (dbJobId) {
         await supabase
           .from('jobs')
-          .update({ status: 'completed', progress: 100, result: { clips_count: 0 }, updated_at: new Date().toISOString() })
+          .update({ status: 'completed', progress: 100, result: { clips_count: 0, clips: [] }, updated_at: new Date().toISOString() })
           .eq('id', dbJobId);
       }
       await supabase.from('projects').update({ status: 'ready' }).eq('id', projectId);
@@ -215,7 +224,7 @@ export class ClipAnalysisProcessor extends WorkerHost {
     }
 
     if (dbJobId) {
-      await supabase.from('jobs').update({ progress: 30 }).eq('id', dbJobId);
+      await supabase.from('jobs').update({ progress: dbProgress(30) }).eq('id', dbJobId);
     }
     await job.updateProgress(30);
     console.log(`[ClipAnalysis] Processing ${transcriptionSegments.length} transcription segments`);
@@ -230,7 +239,7 @@ export class ClipAnalysisProcessor extends WorkerHost {
     };
 
     if (dbJobId) {
-      await supabase.from('jobs').update({ progress: 40 }).eq('id', dbJobId);
+      await supabase.from('jobs').update({ progress: dbProgress(40) }).eq('id', dbJobId);
     }
     await job.updateProgress(40);
 
@@ -243,7 +252,7 @@ export class ClipAnalysisProcessor extends WorkerHost {
         const result = await this.providerManager.callWithUserProvider(task, userId);
 
         if (dbJobId) {
-          await supabase.from('jobs').update({ progress: 60 }).eq('id', dbJobId);
+          await supabase.from('jobs').update({ progress: dbProgress(60) }).eq('id', dbJobId);
         }
         await job.updateProgress(60);
         console.log(`[ClipAnalysis] Received response from ${result.provider} (${result.model})`);
@@ -254,7 +263,7 @@ export class ClipAnalysisProcessor extends WorkerHost {
         const clips = parseAndValidateClips(result.content);
 
         if (dbJobId) {
-          await supabase.from('jobs').update({ progress: 80 }).eq('id', dbJobId);
+          await supabase.from('jobs').update({ progress: dbProgress(80) }).eq('id', dbJobId);
         }
         await job.updateProgress(80);
         console.log(`[ClipAnalysis] Validated ${clips.length} clip candidates`);
@@ -296,7 +305,7 @@ export class ClipAnalysisProcessor extends WorkerHost {
             .update({
               status: 'completed',
               progress: 100,
-              result: { clips_count: clips.length },
+              result: { clips_count: clips.length, clips },
               updated_at: new Date().toISOString(),
             })
             .eq('id', dbJobId);

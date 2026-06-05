@@ -6,20 +6,25 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadsService } from './uploads.service';
+import { BearerUserGuard } from '../auth/bearer-user.guard';
+import { CurrentUser, ResolvedUser } from '../auth/current-user.decorator';
 
 @Controller('uploads')
+@UseGuards(BearerUserGuard)
 export class UploadsController {
   constructor(private readonly uploadsService: UploadsService) {}
 
   @Post('init')
   async initUpload(
+    @CurrentUser() user: ResolvedUser,
     @Body() body: { fileName: string; fileSize: number; mimeType: string },
   ) {
     const uploadId = await this.uploadsService.initUpload(
-      'anonymous', // MVP: user from auth context
+      user.id,
       body.fileName,
       body.fileSize,
       body.mimeType,
@@ -30,6 +35,7 @@ export class UploadsController {
   @Post(':uploadId/chunk')
   @UseInterceptors(FileInterceptor('chunk'))
   async uploadChunk(
+    @CurrentUser() user: ResolvedUser,
     @Param('uploadId') uploadId: string,
     @UploadedFile() file: Express.Multer.File,
     @Body('chunkIndex') chunkIndex: string,
@@ -38,14 +44,15 @@ export class UploadsController {
     if (isNaN(index)) {
       throw new BadRequestException('chunkIndex must be a number');
     }
-    return this.uploadsService.uploadChunk(uploadId, index, file.buffer);
+    return this.uploadsService.uploadChunk(uploadId, user.id, index, file.buffer);
   }
 
   @Post(':uploadId/complete')
   async completeUpload(
+    @CurrentUser() user: ResolvedUser,
     @Param('uploadId') uploadId: string,
     @Body() body: { checksum?: string },
   ) {
-    return this.uploadsService.completeUpload(uploadId, 'anonymous', body.checksum);
+    return this.uploadsService.completeUpload(uploadId, user.id, body.checksum);
   }
 }

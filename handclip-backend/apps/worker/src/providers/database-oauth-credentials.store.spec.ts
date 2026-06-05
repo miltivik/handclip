@@ -128,4 +128,44 @@ describe('DatabaseOAuthCredentialsStore', () => {
     expect(updateCall.credentials_ciphertext).not.toContain('new-access');
     expect(updateCall.credentials_ciphertext).not.toContain('new-refresh');
   });
+
+  it('does not rewrite credentials when pi-ai returns unchanged tokens', async () => {
+    const credentials = { access: 'same', refresh: 'same-refresh', expires: 1234 };
+    const encrypted = encryptJson(credentials, KEY);
+    const supabase = buildSupabaseMock([
+      {
+        id: 'row-4',
+        provider: 'openai-codex' as AiSubscriptionProvider,
+        credentials_ciphertext: encrypted.credentialsCiphertext,
+        credentials_iv: encrypted.credentialsIv,
+        credentials_tag: encrypted.credentialsTag,
+      },
+    ]);
+    const store = new DatabaseOAuthCredentialsStore(
+      supabase as any,
+      KEY,
+      async () => ({
+        getOAuthApiKey: vi.fn(async () => ({ apiKey: 'token', newCredentials: credentials })),
+      }) as any,
+    );
+
+    await store.getActiveApiKey('user-1');
+
+    expect(supabase._chain.update).not.toHaveBeenCalled();
+  });
+
+  it('does not hide database failures as missing credentials', async () => {
+    const supabase = buildSupabaseMock([]);
+    supabase._chain.single.mockResolvedValue({
+      data: null,
+      error: { code: 'XX000', message: 'database unavailable' },
+    });
+    const store = new DatabaseOAuthCredentialsStore(
+      supabase as any,
+      KEY,
+      async () => ({}) as any,
+    );
+
+    await expect(store.getActiveApiKey('user-1')).rejects.toThrow('database unavailable');
+  });
 });

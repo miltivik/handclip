@@ -27,6 +27,8 @@ interface InternalAttempt extends PublicOAuthAttempt {
   manualCodeResolver?: (input: string) => void;
   cancelled: boolean;
   awaitingResolver?: () => void;
+  expirationTimer?: ReturnType<typeof setTimeout>;
+  cleanupTimer?: ReturnType<typeof setTimeout>;
 }
 
 export interface OAuthAttemptDeviceCode {
@@ -112,21 +114,31 @@ export class OAuthAttemptManager {
       cancelled: false,
     };
     this.attempts.set(id, attempt);
+    this.scheduleExpiration(attempt);
 
     const awaitingUser = new Promise<void>((resolve) => {
       attempt.awaitingResolver = resolve;
     });
 
     void this.run(attempt).catch((error) => {
+      if (attempt.status === 'expired') {
+        return;
+      }
       attempt.status = 'failed';
       attempt.error = sanitizeError(error);
       attempt.awaitingResolver?.();
     });
 
+    let waitTimer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       awaitingUser,
-      new Promise((resolve) => setTimeout(resolve, 5000)),
+      new Promise((resolve) => {
+        waitTimer = setTimeout(resolve, 5000);
+      }),
     ]);
+    if (waitTimer) {
+      clearTimeout(waitTimer);
+    }
 
     return this.toPublic(attempt);
   }
@@ -172,38 +184,35 @@ export class OAuthAttemptManager {
             attempt.intervalSeconds = info.intervalSeconds;
             if (info.expiresInSeconds) {
               attempt.expiresAt = new Date(Date.now() + info.expiresInSeconds * 1000).toISOString();
+              this.scheduleExpiration(attempt);
             }
             attempt.awaitingResolver?.();
           },
         });
       } else {
-        credentials = await new Promise<OAuthCredentials>((resolve, reject) => {
-          attempt.manualCodeResolver = (input: string) => {
-            resolve({ access: '', refresh: '', expires: 0, code: input } as unknown as OAuthCredentials);
-          };
-          oauth
-            .loginAnthropic({
-              onAuth: (info) => {
-                attempt.status = 'awaiting-user';
-                attempt.authorizationUrl = info.url;
-                attempt.awaitingResolver?.();
-              },
-              onPrompt: async () => {
-                throw new OAuthAttemptInvalidStateError('Prompt input is not supported in mobile flow');
-              },
-              onManualCodeInput: () => {
-                if (attempt.cancelled) {
-                  return Promise.reject(new OAuthAttemptInvalidStateError('OAuth attempt was cancelled'));
-                }
-                return new Promise<string>((resolve) => {
-                  attempt.manualCodeResolver = (input: string) => resolve(input);
-                });
-              },
-            })
-            .then(resolve, reject);
+        credentials = await oauth.loginAnthropic({
+          onAuth: (info) => {
+            attempt.status = 'awaiting-user';
+            attempt.authorizationUrl = info.url;
+            attempt.awaitingResolver?.();
+          },
+          onPrompt: async () => {
+            throw new OAuthAttemptInvalidStateError('Prompt input is not supported in mobile flow');
+          },
+          onManualCodeInput: () => {
+            if (attempt.cancelled || attempt.status === 'expired') {
+              return Promise.reject(new OAuthAttemptInvalidStateError('OAuth attempt is no longer active'));
+            }
+            return new Promise<string>((resolve) => {
+              attempt.manualCodeResolver = (input: string) => resolve(input);
+            });
+          },
         });
       }
     } catch (error) {
+      if (attempt.status === 'expired') {
+        return;
+      }
       if (attempt.cancelled) {
         attempt.status = 'cancelled';
         return;
@@ -216,6 +225,13 @@ export class OAuthAttemptManager {
 
     if (attempt.cancelled) {
       attempt.status = 'cancelled';
+      this.scheduleCleanup(attempt);
+      return;
+    }
+
+    if (this.isExpired(attempt)) {
+      attempt.status = 'expired';
+      this.scheduleCleanup(attempt);
       return;
     }
 
@@ -226,6 +242,7 @@ export class OAuthAttemptManager {
       attempt.status = 'failed';
       attempt.error = sanitizeError(error);
     }
+    this.scheduleCleanup(attempt);
     attempt.awaitingResolver?.();
   }
 
@@ -249,8 +266,42 @@ export class OAuthAttemptManager {
     }
     if (Date.parse(attempt.expiresAt) <= Date.now()) {
       attempt.status = 'expired';
+      this.scheduleCleanup(attempt);
       throw new OAuthAttemptExpiredError(attempt.id);
     }
+  }
+
+  private isExpired(attempt: InternalAttempt): boolean {
+    return Date.parse(attempt.expiresAt) <= Date.now();
+  }
+
+  private scheduleExpiration(attempt: InternalAttempt): void {
+    if (attempt.expirationTimer) {
+      clearTimeout(attempt.expirationTimer);
+    }
+    const delay = Math.max(0, Date.parse(attempt.expiresAt) - Date.now());
+    attempt.expirationTimer = setTimeout(() => {
+      if (attempt.status === 'initializing' || attempt.status === 'awaiting-user') {
+        attempt.status = 'expired';
+        attempt.manualCodeResolver = undefined;
+        this.scheduleCleanup(attempt);
+      }
+    }, delay);
+    attempt.expirationTimer.unref?.();
+  }
+
+  private scheduleCleanup(attempt: InternalAttempt): void {
+    if (attempt.expirationTimer) {
+      clearTimeout(attempt.expirationTimer);
+      attempt.expirationTimer = undefined;
+    }
+    if (attempt.cleanupTimer) {
+      return;
+    }
+    attempt.cleanupTimer = setTimeout(() => {
+      this.attempts.delete(attempt.id);
+    }, 60_000);
+    attempt.cleanupTimer.unref?.();
   }
 
   private toPublic(attempt: InternalAttempt): PublicOAuthAttempt {

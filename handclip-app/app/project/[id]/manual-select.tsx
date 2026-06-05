@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { useProjectStore } from '../../../stores/project.store';
+import { api } from '../../../services/api';
 
 export default function ManualSelectScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -42,8 +43,7 @@ export default function ManualSelectScreen() {
 
     setIsLoading(true);
     try {
-      // Create clip with manual times - this would call the API
-      // For now, we'll just navigate back
+      await api.createManualClip(id, startTime, endTime);
       await fetchClips(id);
       router.back();
     } catch (err) {

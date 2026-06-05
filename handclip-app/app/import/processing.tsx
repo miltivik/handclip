@@ -14,13 +14,15 @@ const STAGES = [
 
 export default function ProcessingScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ projectId: string; videoUrl: string }>();
+  const params = useLocalSearchParams<{ projectId: string }>();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const isAnonymous = useAuthStore((state) => state.isAnonymous);
   const [stage, setStage] = useState(0);
   const [progress, setProgress] = useState(0);
+  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
+  const startedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (isAnonymous || !isAuthenticated) {
@@ -30,27 +32,41 @@ export default function ProcessingScreen() {
   }, [isAnonymous, isAuthenticated]);
 
   useEffect(() => {
-    if (!params.projectId || !params.videoUrl) {
-      setError('Faltan parámetros: projectId o videoUrl');
+    if (!params.projectId) {
+      setError('Falta parámetro: projectId');
       return;
     }
 
     const runAnalysis = async () => {
+      setStage(0);
+      setProgress(0);
+      setEtaSeconds(null);
+      startedAtRef.current = null;
       try {
         // 1. Iniciar análisis
-        const { jobId } = await api.analyze(params.projectId!, params.videoUrl!);
+        const { jobId } = await api.analyze(params.projectId!);
 
         // 2. Suscribirse al progreso vía SSE
         unsubscribeRef.current = subscribeJobProgress(
           jobId,
           (data) => {
             // Actualizar progreso según el estado
-            setProgress(data.progress);
-
-            if (data.progress >= 66) setStage(2);
-            else if (data.progress >= 33) setStage(1);
+            const nextProgress = Math.max(0, Math.min(100, data.progress));
+            setProgress(nextProgress);
+            if (nextProgress > 0 && !startedAtRef.current) {
+              startedAtRef.current = Date.now();
+            }
+            if (nextProgress > 5 && nextProgress < 100 && startedAtRef.current) {
+              const elapsed = (Date.now() - startedAtRef.current) / 1000;
+              setEtaSeconds(elapsed > 30 ? Math.ceil((elapsed / nextProgress) * (100 - nextProgress)) : null);
+            } else {
+              setEtaSeconds(null);
+            }
+            if (nextProgress >= 66) setStage(2);
+            else if (nextProgress >= 33) setStage(1);
           },
           (result) => {
+            setEtaSeconds(null);
             // Job completado: guardar clips y navegar
             const data = result as any;
             const clips = data?.segments || data?.returnvalue?.clips;
@@ -82,7 +98,7 @@ export default function ProcessingScreen() {
     return () => {
       unsubscribeRef.current?.();
     };
-  }, [params.projectId, params.videoUrl, router]);
+  }, [params.projectId, router]);
 
   if (error) {
     return (
@@ -105,6 +121,7 @@ export default function ProcessingScreen() {
           <ProgressBar
             stage={STAGES[stage]}
             percentage={Math.round(progress)}
+            etaSeconds={etaSeconds ?? undefined}
           />
         </View>
 

@@ -1,5 +1,7 @@
-import { Controller, Post, Get, Body } from '@nestjs/common';
+import { Controller, Post, Get, Body, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { BearerUserGuard } from './bearer-user.guard';
+import { CurrentUser, ResolvedUser } from './current-user.decorator';
 
 @Controller('auth')
 export class AuthController {
@@ -18,5 +20,11 @@ export class AuthController {
   @Get('me')
   async me(@Body() body: { token: string }) {
     return this.authService.getUser(body.token);
+  }
+
+  @UseGuards(BearerUserGuard)
+  @Get('quota')
+  async getQuota(@CurrentUser() user: ResolvedUser) {
+    return this.authService.getQuota(user.id);
   }
 }

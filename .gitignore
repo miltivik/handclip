@@ -17,6 +17,7 @@ web-build/
 .env
 .env.local
 .env.production
+db-pass.txt
 
 # IDE
 .vscode/

@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { MAX_FREE_EXPORTS_PER_MONTH } from '@handclip/shared/constants/limits';
 
 export async function incrementExportCount(
   userId: string,
@@ -15,12 +16,11 @@ export async function incrementExportCount(
   const needsReset = !lastReset || lastReset.getMonth() !== now.getMonth() || lastReset.getFullYear() !== now.getFullYear();
 
   const count = needsReset ? 1 : (profile?.exports_this_month || 0) + 1;
-  const MAX_FREE_EXPORTS = 3;
 
   await supabase
     .from('profiles')
     .update({ exports_this_month: count, last_export_reset_at: now.toISOString() })
     .eq('id', userId);
 
-  return { allowed: count <= MAX_FREE_EXPORTS, count };
+  return { allowed: count <= MAX_FREE_EXPORTS_PER_MONTH, count };
 }

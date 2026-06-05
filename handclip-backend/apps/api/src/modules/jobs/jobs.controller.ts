@@ -1,21 +1,27 @@
-import { Controller, Get, Post, Param, Body, Sse } from '@nestjs/common';
+import { Controller, Get, Param, Sse, UseGuards } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { QueueEvents } from 'bullmq';
 import { JobsService } from './jobs.service';
+import { BearerUserGuard } from '../auth/bearer-user.guard';
+import { CurrentUser, ResolvedUser } from '../auth/current-user.decorator';
 
 @Controller()
+@UseGuards(BearerUserGuard)
 export class JobsController {
   constructor(private readonly jobsService: JobsService) {}
 
   // analyze endpoint is in ProjectsController to avoid route conflict
 
   @Get('jobs/:jobId')
-  async getJobStatus(@Param('jobId') jobId: string) {
-    return this.jobsService.getJob(jobId);
+  async getJobStatus(@CurrentUser() user: ResolvedUser, @Param('jobId') jobId: string) {
+    return this.jobsService.getJobForUser(jobId, user.id);
   }
 
   @Sse('jobs/:jobId/progress')
-  getJobProgress(@Param('jobId') jobId: string): Observable<MessageEvent> {
+  getJobProgress(
+    @CurrentUser() user: ResolvedUser,
+    @Param('jobId') jobId: string,
+  ): Observable<MessageEvent> {
     return new Observable((subscriber) => {
       const redisConfig = {
         host: process.env.REDIS_HOST || 'localhost',
@@ -32,7 +38,7 @@ export class JobsController {
         if (args.jobId && args.jobId !== jobId) return;
 
         try {
-          const progress = await this.jobsService.getJob(jobId);
+          const progress = await this.jobsService.getJobForUser(jobId, user.id);
           subscriber.next({ data: JSON.stringify(progress) } as MessageEvent);
 
           if (progress.status === 'COMPLETED' || progress.status === 'FAILED') {
@@ -52,7 +58,7 @@ export class JobsController {
       // Fallback: emit current state every 2s while waiting for BullMQ events
       const fallback = setInterval(async () => {
         try {
-          const progress = await this.jobsService.getJob(jobId);
+          const progress = await this.jobsService.getJobForUser(jobId, user.id);
           subscriber.next({ data: JSON.stringify(progress) } as MessageEvent);
 
           if (progress.status === 'COMPLETED' || progress.status === 'FAILED') {
@@ -74,14 +80,5 @@ export class JobsController {
         }
       };
     });
-  }
-
-  @Post('jobs/:jobId/progress')
-  async updateProgress(
-    @Param('jobId') jobId: string,
-    @Body() body: { jobId: string; type: string; status: string; progress: number },
-  ) {
-    await this.jobsService.updateJobProgress(body.jobId, body as any);
-    return { success: true };
   }
 }

@@ -1,7 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { useEffect, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { View, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, Alert, TextInput } from 'react-native';
 import { VideoView } from 'expo-video';
 import Preview from '../../../components/editor/Preview';
 import Timeline from '../../../components/editor/Timeline';
@@ -29,13 +29,18 @@ export default function EditScreen() {
     trimEnd,
     subtitles,
     preset,
+    speed,
+    textOverlay,
     setTrimStart,
     setTrimEnd,
     setSubtitles,
+    setSpeed,
+    setTextOverlay,
   } = useEditorStore();
   const [editingSubtitle, setEditingSubtitle] = useState<EditingSubtitle | null>(null);
   const [musicUrl, setMusicUrl] = useState<string | null>(null);
   const [musicVolume, setMusicVolume] = useState(0.3);
+  const [quota, setQuota] = useState<{ exportsThisMonth: number; maxExports: number } | null>(null);
   const {
     currentProject,
     clips,
@@ -59,6 +64,10 @@ export default function EditScreen() {
       fetchSubtitles(id, clipId);
     }
   }, [id, clipId, fetchSubtitles]);
+  // Load quota on mount
+  useEffect(() => {
+    api.getQuota().then(setQuota).catch(() => null);
+  }, []);
 
   // Find selected clip and set trim handles from clip's actual times
   useEffect(() => {
@@ -81,9 +90,18 @@ export default function EditScreen() {
       showAccountRequired();
       return;
     }
-
     try {
-      const result = await api.createExportJob(id, clipId, preset);
+      const result = await api.createExportJob(id, {
+        clipId,
+        trimStart,
+        trimEnd,
+        subtitles: displaySubtitles,
+        preset,
+        musicUrl: musicUrl || undefined,
+        musicVolume,
+        speed,
+        textOverlay: textOverlay?.text.trim() ? textOverlay : null,
+      });
       if (result.jobId) {
         router.push(`/project/${id}/export?jobId=${result.jobId}&preset=${preset}`);
       }
@@ -124,6 +142,7 @@ export default function EditScreen() {
     setMusicVolume((prev) => Math.max(0, Math.min(2, prev + delta)));
   };
   const displaySubtitles = subtitles.length > 0 ? subtitles : projectSubtitles;
+  const SPEED_OPTIONS: (0.5 | 1 | 2)[] = [0.5, 1, 2];
 
   return (
     <View style={styles.container}>
@@ -207,7 +226,7 @@ export default function EditScreen() {
 
       <View style={styles.timelineContainer}>
         <Timeline
-          duration={duration || currentProject?.duration || 0}
+          duration={duration || currentProject?.sourceDuration || 0}
           trimStart={trimStart}
           trimEnd={trimEnd}
           onTrimStartChange={setTrimStart}
@@ -217,9 +236,107 @@ export default function EditScreen() {
       </View>
 
       <View style={styles.footer}>
-        <TouchableOpacity 
-          style={styles.exportButton} 
+        {/* Speed selector */}
+        <View style={styles.speedSection}>
+          <Text style={styles.speedLabel}>Velocidad</Text>
+          <View style={styles.speedOptions}>
+            {SPEED_OPTIONS.map((opt) => (
+              <TouchableOpacity
+                key={opt}
+                style={[
+                  styles.speedButton,
+                  speed === opt && styles.speedButtonSelected,
+                ]}
+                onPress={() => setSpeed(opt)}
+                accessibilityRole="button"
+                accessibilityLabel={"Velocidad " + opt + "x"}
+              >
+                <Text
+                  style={[
+                    styles.speedButtonText,
+                    speed === opt && styles.speedButtonTextSelected,
+                  ]}
+                >
+                  {opt}x
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+        {/* Text overlay */}
+        <View style={styles.textOverlaySection}>
+          <Text style={styles.textOverlayLabel}>Texto overlay</Text>
+          <TextInput
+            style={styles.textOverlayInput}
+            maxLength={120}
+            placeholder="Texto sobre el video..."
+            placeholderTextColor="#888"
+            value={textOverlay?.text || ''}
+            onChangeText={(newText) => {
+              if (!newText.trim()) {
+                setTextOverlay(null);
+              } else {
+                setTextOverlay({
+                  text: newText,
+                  position: textOverlay?.position || 'bottom',
+                });
+              }
+            }}
+          />
+          {(textOverlay?.text || '').trim().length > 0 && (
+            <View style={styles.positionButtons}>
+              {(['top', 'center', 'bottom'] as const).map((pos) => (
+                <TouchableOpacity
+                  key={pos}
+                  style={[
+                    styles.positionButton,
+                    textOverlay?.position === pos && styles.positionButtonSelected,
+                  ]}
+                  onPress={() =>
+                    setTextOverlay({
+                      text: textOverlay!.text,
+                      position: pos,
+                    })
+                  }
+                  accessibilityRole="button"
+                >
+                  <Text
+                    style={[
+                      styles.positionButtonText,
+                      textOverlay?.position === pos && styles.positionButtonTextSelected,
+                    ]}
+                  >
+                    {pos === 'top' ? 'Arriba' : pos === 'center' ? 'Centro' : 'Abajo'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
+        {quota ? (
+          <View style={styles.quotaIndicator}>
+            <Text
+              style={[
+                styles.quotaText,
+                quota.exportsThisMonth >= quota.maxExports && styles.quotaTextDanger,
+              ]}
+            >
+              {quota.maxExports - quota.exportsThisMonth} / {quota.maxExports} exports restantes
+            </Text>
+            {quota.exportsThisMonth >= quota.maxExports && (
+              <Text style={styles.quotaWarningText}>Limite de exportaciones alcanzado</Text>
+            )}
+          </View>
+        ) : null}
+        <TouchableOpacity
+          style={[
+            styles.exportButton,
+            quota?.exportsThisMonth !== undefined &&
+              quota.exportsThisMonth >= quota.maxExports &&
+              styles.exportButtonDisabled,
+          ]}
           onPress={handleExport}
+          disabled={quota?.exportsThisMonth !== undefined && quota.exportsThisMonth >= quota.maxExports}
           accessibilityLabel="Exportar clip"
           accessibilityRole="button"
         >
@@ -331,5 +448,101 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     textAlign: 'center',
+  },
+  // Speed selector styles
+  speedSection: {
+    marginBottom: 16,
+  },
+  speedLabel: {
+    fontSize: 14,
+    color: '#888',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  speedOptions: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  speedButton: {
+    backgroundColor: '#f0f0f0',
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    minWidth: 60,
+    alignItems: 'center',
+  },
+  speedButtonSelected: {
+    backgroundColor: '#007AFF',
+  },
+  speedButtonText: {
+    color: '#333',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  speedButtonTextSelected: {
+    color: '#fff',
+  },
+  // Text overlay styles
+  textOverlaySection: {
+    marginBottom: 16,
+  },
+  textOverlayLabel: {
+    fontSize: 14,
+    color: '#888',
+    marginBottom: 8,
+  },
+  textOverlayInput: {
+    backgroundColor: '#333',
+    color: '#fff',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  positionButtons: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  positionButton: {
+    backgroundColor: '#f0f0f0',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  positionButtonSelected: {
+    backgroundColor: '#007AFF',
+  },
+  positionButtonText: {
+    color: '#333',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  positionButtonTextSelected: {
+    color: '#fff',
+  },
+  quotaIndicator: {
+    marginBottom: 12,
+    alignItems: 'center',
+  },
+  quotaText: {
+    color: '#888',
+    fontSize: 13,
+  },
+  quotaTextDanger: {
+    color: '#DC2626',
+    fontWeight: '600',
+  },
+  quotaWarningText: {
+    color: '#DC2626',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  exportButtonDisabled: {
+    opacity: 0.5,
   },
 });

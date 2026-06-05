@@ -1,5 +1,12 @@
 import { create } from 'zustand';
+import type * as ZustandMiddleware from 'zustand/middleware';
 import { api, Project, ClipCandidate } from '../services/api';
+import { safeStorage } from '../lib/safe-storage';
+
+declare const require: <T>(name: string) => T;
+
+const { createJSONStorage, persist } =
+  require<typeof ZustandMiddleware>('zustand/middleware');
 
 export interface SubtitleSegment {
   id: string;
@@ -29,67 +36,83 @@ interface ProjectState {
   toggleClipSelection: (projectId: string, clipId: string, selected: boolean) => Promise<void>;
 }
 
-export const useProjectStore = create<ProjectState>((set, get) => ({
-  currentProject: null,
-  clips: [],
-  selectedClipId: null,
-  isLoading: false,
-  error: null,
-  subtitles: [],
-  subtitlesLoading: false,
+export const useProjectStore = create<ProjectState>()(
+  persist(
+    (set, get) => ({
+      currentProject: null,
+      clips: [],
+      selectedClipId: null,
+      isLoading: false,
+      error: null,
+      subtitles: [],
+      subtitlesLoading: false,
 
-  setProject: (project) => set({ currentProject: project }),
+      setProject: (project) => set({ currentProject: project }),
 
-  setClips: (clips) => set({ clips }),
+      setClips: (clips) => set({ clips }),
 
-  selectClip: (clipId) => set({ selectedClipId: clipId }),
+      selectClip: (clipId) => set({ selectedClipId: clipId }),
 
-  clearProject: () =>
-    set({ currentProject: null, clips: [], selectedClipId: null, subtitles: [] }),
+      clearProject: () =>
+        set({ currentProject: null, clips: [], selectedClipId: null, subtitles: [], error: null }),
 
-  fetchProject: async (projectId: string) => {
-    set({ isLoading: true, error: null });
-    try {
-      const project = await api.getProject(projectId);
-      set({ currentProject: project, isLoading: false });
-    } catch (err: any) {
-      set({ error: err?.message || 'Error loading project', isLoading: false });
+      fetchProject: async (projectId: string) => {
+        set({ isLoading: true, error: null });
+        try {
+          const project = await api.getProject(projectId);
+          set({ currentProject: project, isLoading: false });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Error loading project';
+          set({ error: message, isLoading: false });
+        }
+      },
+
+      fetchClips: async (projectId: string) => {
+        set({ isLoading: true, error: null });
+        try {
+          const clips = await api.getClips(projectId);
+          set({ clips, isLoading: false });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Error loading clips';
+          set({ error: message, isLoading: false });
+        }
+      },
+
+      fetchSubtitles: async (projectId: string, clipId: string) => {
+        set({ subtitlesLoading: true, error: null });
+        try {
+          const subtitles = await api.getSubtitles(projectId, clipId);
+          set({ subtitles, subtitlesLoading: false });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Error loading subtitles';
+          set({ error: message, subtitlesLoading: false });
+        }
+      },
+
+      toggleClipSelection: async (projectId: string, clipId: string, selected: boolean) => {
+        const prevClips = get().clips;
+        // Optimistic update
+        set({
+          clips: prevClips.map((c) =>
+            c.id === clipId ? { ...c, selected } : c,
+          ),
+        });
+        try {
+          await api.selectClip(projectId, clipId, selected);
+        } catch {
+          // Rollback on error
+          set({ clips: prevClips });
+        }
+      },
+    }),
+    {
+      name: 'handclip-project-cache',
+      storage: createJSONStorage(() => safeStorage),
+      partialize: (state) => ({
+        currentProject: state.currentProject,
+        clips: state.clips,
+        subtitles: state.subtitles,
+      }),
     }
-  },
-
-  fetchClips: async (projectId: string) => {
-    set({ isLoading: true, error: null });
-    try {
-      const clips = await api.getClips(projectId);
-      set({ clips, isLoading: false });
-    } catch (err: any) {
-      set({ error: err?.message || 'Error loading clips', isLoading: false });
-    }
-  },
-
-  fetchSubtitles: async (projectId: string, clipId: string) => {
-    set({ subtitlesLoading: true, error: null });
-    try {
-      const subtitles = await api.getSubtitles(projectId, clipId);
-      set({ subtitles, subtitlesLoading: false });
-    } catch (err: any) {
-      set({ error: err?.message || 'Error loading subtitles', subtitlesLoading: false });
-    }
-  },
-
-  toggleClipSelection: async (projectId: string, clipId: string, selected: boolean) => {
-    const prevClips = get().clips;
-    // Optimistic update
-    set({
-      clips: prevClips.map((c) =>
-        c.id === clipId ? { ...c, selected } : c,
-      ),
-    });
-    try {
-      await api.selectClip(projectId, clipId, selected);
-    } catch {
-      // Rollback on error
-      set({ clips: prevClips });
-    }
-  },
-}));
+  )
+);

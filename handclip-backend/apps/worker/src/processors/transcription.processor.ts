@@ -21,6 +21,7 @@ interface TranscriptionJobData {
   projectId: string;
   userId: string;
   videoUrl: string;
+  trackingJobId?: string;
 }
 
 @Processor('transcription')
@@ -35,21 +36,29 @@ export class TranscriptionProcessor extends WorkerHost {
   }
 
   async process(job: Job<TranscriptionJobData>): Promise<{ segments: SubtitleSegment[] }> {
-    const { projectId, videoUrl } = job.data;
+    const { projectId, videoUrl, trackingJobId } = job.data;
     const supabase = this.supabaseService.getServiceRoleClient();
+    const dbProgress = (progress: number) =>
+      trackingJobId ? Math.round(progress * 0.6) : progress;
 
-    // Create job record in DB
-    const { data: jobRecord, error: jobCreateError } = await supabase
-      .from('jobs')
-      .insert({
-        project_id: projectId,
-        type: 'transcription',
-        status: 'active',
-        progress: 5,
-        bullmq_id: job.id,
-      })
-      .select('id')
-      .single();
+    const { data: jobRecord, error: jobCreateError } = trackingJobId
+      ? await supabase
+          .from('jobs')
+          .update({ status: 'active', progress: dbProgress(5) })
+          .eq('id', trackingJobId)
+          .select('id')
+          .single()
+      : await supabase
+          .from('jobs')
+          .insert({
+            project_id: projectId,
+            type: 'transcription',
+            status: 'active',
+            progress: 5,
+            bullmq_id: job.id,
+          })
+          .select('id')
+          .single();
 
     if (jobCreateError) {
       console.error(`[Transcription] Failed to create job record: ${jobCreateError.message}`);
@@ -81,7 +90,7 @@ export class TranscriptionProcessor extends WorkerHost {
 
       // Step 2: Extract audio with FFmpeg
       if (dbJobId) {
-        await supabase.from('jobs').update({ progress: 20 }).eq('id', dbJobId);
+        await supabase.from('jobs').update({ progress: dbProgress(20) }).eq('id', dbJobId);
       }
       await job.updateProgress(20);
       console.log(`[Transcription] Extracting audio for project ${projectId}`);
@@ -92,7 +101,7 @@ export class TranscriptionProcessor extends WorkerHost {
 
       // Step 3: Call Whisper API with word-level timestamps
       if (dbJobId) {
-        await supabase.from('jobs').update({ progress: 40 }).eq('id', dbJobId);
+        await supabase.from('jobs').update({ progress: dbProgress(40) }).eq('id', dbJobId);
       }
       await job.updateProgress(40);
       console.log(`[Transcription] Calling Whisper API for project ${projectId}`);
@@ -114,7 +123,7 @@ export class TranscriptionProcessor extends WorkerHost {
       }
 
       if (dbJobId) {
-        await supabase.from('jobs').update({ progress: 70 }).eq('id', dbJobId);
+        await supabase.from('jobs').update({ progress: dbProgress(70) }).eq('id', dbJobId);
       }
       await job.updateProgress(70);
 
@@ -158,9 +167,11 @@ export class TranscriptionProcessor extends WorkerHost {
         await supabase
           .from('jobs')
           .update({
-            status: 'completed',
-            progress: 100,
-            result: { segments_count: segments.length },
+            status: trackingJobId ? 'active' : 'completed',
+            progress: dbProgress(100),
+            result: trackingJobId
+              ? { pipeline: 'analysis', segments_count: segments.length }
+              : { segments_count: segments.length },
             updated_at: new Date().toISOString(),
           })
           .eq('id', dbJobId);
@@ -181,6 +192,7 @@ export class TranscriptionProcessor extends WorkerHost {
         userId: job.data.userId,
         videoUrl,
         transcriptionSegments: segments,
+        trackingJobId,
       });
 
       await clipQueue.close();

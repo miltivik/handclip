@@ -6,29 +6,40 @@ const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
 
 export interface Project {
   id: string;
-  user_id: string;
+  userId: string;
   name: string;
-  video_url: string;
-  thumbnail_url: string | null;
-  duration: number | null;
-  created_at: string;
-  updated_at: string;
+  description?: string;
+  sourceVideoUrl?: string;
+  sourceDuration?: number;
+  status?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ClipCandidate {
   id: string;
-  project_id: string;
-  start_time: number;
-  end_time: number;
-  score: number;
-  thumbnail_url: string | null;
-  created_at: string;
+  projectId: string;
+  startTime: number;
+  endTime: number;
+  duration?: number;
+  confidenceScore: number;
+  reasons: string[];
+  suggestedCaption: string;
+  transcriptSnippet?: string;
+  moodTags?: string[];
+  platformTargets?: string[];
+  status?: string;
+  selected?: boolean;
+  createdAt?: string;
 }
 
 export interface SubtitleSegment {
-  start: number;
-  end: number;
+  id: string;
   text: string;
+  startTime: number;
+  endTime: number;
+  words?: { word: string; start: number; end: number; probability: number }[];
+  language?: string;
 }
 
 export interface AnalyzeResponse {
@@ -68,6 +79,28 @@ export interface OAuthAttempt {
   expiresAt: string;
   error?: string;
 }
+
+export interface ExportItem {
+  id: string;
+  project_id: string;
+  clip_id: string | null;
+  preset: string;
+  status: string;
+  output_url: string | null;
+  file_size: number | null;
+  duration: number | null;
+  created_at: string;
+  completed_at: string | null;
+  project_title: string;
+};
+export interface QuotaInfo {
+  exportsThisMonth: number;
+  maxExports: number;
+  plan: string;
+}
+// =============================================================================
+// Core HTTP helpers
+// =============================================================================
 
 // =============================================================================
 // Core HTTP helpers
@@ -152,6 +185,7 @@ export const api = {
   signOut: () => post<{ success: boolean }>('/auth/signout', {}),
 
   getSession: () => get<{ userId: string }>('/auth/session'),
+  getQuota: () => get<QuotaInfo>('/auth/quota'),
 
   // ---- Projects ----
   getProjects: () => get<Project[]>('/projects'),
@@ -159,19 +193,40 @@ export const api = {
   getProject: (projectId: string) => get<Project>(`/projects/${projectId}`),
 
   createProject: (name: string, videoUrl: string) =>
-    post<Project>('/projects', { name, video_url: videoUrl }),
+    post<Project>('/projects', { name, sourceVideoUrl: videoUrl }),
 
   deleteProject: (projectId: string) =>
-    post<{ success: boolean }>(`/projects/${projectId}`, { _method: 'DELETE' }),
+    del<void>(`/projects/${projectId}`),
 
   // ---- Clips ----
   getClips: (projectId: string) =>
     get<ClipCandidate[]>(`/projects/${projectId}/clips`),
   createManualClip: (projectId: string, startTime: number, endTime: number) =>
     post<{ clipId: string }>(`/projects/${projectId}/clips/manual`, { startTime, endTime }),
+  selectClip: (projectId: string, clipId: string, selected: boolean) =>
+    post<ClipCandidate>(`/projects/${projectId}/clips/${clipId}/select`, { selected }),
+  getSubtitles: (projectId: string, clipId: string) =>
+    get<SubtitleSegment[]>(`/projects/${projectId}/clips/${clipId}/subtitles`),
   // ---- Analysis ----
-  analyze: (projectId: string, videoUrl: string) =>
-    post<AnalyzeResponse>(`/projects/${projectId}/analyze`, { videoUrl }),
+  analyze: (projectId: string) =>
+    post<AnalyzeResponse>(`/projects/${projectId}/analyze`, {}),
+  createExportJob: (
+    projectId: string,
+    body: {
+      clipId: string;
+      trimStart: number;
+      trimEnd: number;
+      subtitles?: SubtitleSegment[] | { text: string; startTime: number; endTime: number }[];
+      preset?: string;
+      musicUrl?: string;
+      musicVolume?: number;
+      speed?: 0.5 | 1 | 2;
+      textOverlay?: { text: string; position: 'top' | 'center' | 'bottom' } | null;
+    },
+  ) => post<AnalyzeResponse>(`/projects/${projectId}/export`, body),
+  getExportJob: (projectId: string, jobId: string) =>
+    get<JobProgress>(`/projects/${projectId}/export/${jobId}`),
+  getExports: () => get<ExportItem[]>('/exports'),
 
   uploadVideoFile: async (file: {
     uri: string;
@@ -257,46 +312,6 @@ export function subscribeJobProgress(
   onComplete: (result?: Record<string, unknown>) => void,
   onError?: (error: Error) => void,
 ): () => void {
-  const baseUrl = API_BASE.replace('/api', '');
-  const url = `${baseUrl}/jobs/${jobId}/progress`;
-
-  // Try EventSource first (works in browser/React Native with polyfill)
-  let eventSource: EventSource | null = null;
-  let useEventSource = true;
-
-  try {
-    eventSource = new EventSource(url);
-  } catch {
-    useEventSource = false;
-  }
-
-  if (useEventSource && eventSource) {
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data) as JobProgress;
-        onProgress(data);
-        if (data.status === 'COMPLETED') {
-          onComplete(data.result ?? data.returnvalue);
-          eventSource?.close();
-        } else if (data.status === 'FAILED') {
-          onError?.(new Error(data.failedReason ?? 'Processing failed'));
-          eventSource?.close();
-        }
-      } catch {
-        // ignore parse errors
-      }
-    };
-
-    eventSource.onerror = () => {
-      // Fallback to polling if EventSource fails
-      eventSource?.close();
-      startPolling();
-    };
-
-    return () => eventSource?.close();
-  }
-
-  // Polling fallback
   let active = true;
   let failures = 0;
   const MAX_FAILURES = 3;
@@ -306,6 +321,7 @@ export function subscribeJobProgress(
     try {
       const data = await get<JobProgress>(`/jobs/${jobId}`);
       if (!active) return;
+      failures = 0;
       onProgress(data);
 
       if (data.status === 'COMPLETED') {
@@ -324,18 +340,8 @@ export function subscribeJobProgress(
     }
   };
 
-  function startPolling() {
-    const intervalId = setInterval(poll, 2000);
-    poll();
-    // Return cleanup function
-    active = false;
-    clearInterval(intervalId);
-  }
-
-  // If EventSource is available, the return above handles cleanup.
-  // If we fell through to polling, set up the interval now.
   const intervalId = setInterval(poll, 2000);
-  poll();
+  void poll();
 
   return () => {
     active = false;

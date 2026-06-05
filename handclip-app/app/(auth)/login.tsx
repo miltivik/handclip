@@ -1,19 +1,22 @@
 import { useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useAuthStore } from '../../stores/auth.store';
+import { useAppTheme } from '../../lib/theme';
 
 export default function LoginScreen() {
+  const { theme } = useAppTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -78,7 +81,7 @@ export default function LoginScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: theme.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView
@@ -86,19 +89,31 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
-          <Text style={styles.title} accessibilityRole="header">HandClip</Text>
-          <Text style={styles.subtitle}>Inicia sesión para continuar</Text>
+          <Image
+            source={require('../../assets/logo.png')}
+            style={styles.logoMark}
+            resizeMode="contain"
+            accessibilityLabel="HandClip"
+            accessibilityIgnoresInvertColors
+          />
+          <Text style={[styles.title, { color: theme.text }]} accessibilityRole="header">
+            HandClip
+          </Text>
+          <Text style={[styles.subtitle, { color: theme.muted }]}>Inicia sesión para continuar</Text>
         </View>
 
         <View style={styles.form}>
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Correo electrónico</Text>
+            <Text style={[styles.label, { color: theme.text }]}>Correo electrónico</Text>
             <TextInput
-              style={styles.input}
+              style={[
+                styles.input,
+                { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text },
+              ]}
               value={email}
               onChangeText={setEmail}
               placeholder="tu@email.com"
-              placeholderTextColor="#6B7280"
+              placeholderTextColor={theme.muted}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
@@ -108,13 +123,16 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Contraseña</Text>
+            <Text style={[styles.label, { color: theme.text }]}>Contraseña</Text>
             <TextInput
-              style={styles.input}
+              style={[
+                styles.input,
+                { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text },
+              ]}
               value={password}
               onChangeText={setPassword}
               placeholder="••••••••"
-              placeholderTextColor="#6B7280"
+              placeholderTextColor={theme.muted}
               secureTextEntry
               accessibilityLabel="Contraseña"
               textContentType="password"
@@ -122,37 +140,51 @@ export default function LoginScreen() {
           </View>
 
           {errorMessage ? (
-            <Text style={styles.errorText} accessibilityRole="alert">{errorMessage}</Text>
+            <Text style={[styles.errorText, { color: theme.danger }]} accessibilityRole="alert">
+              {errorMessage}
+            </Text>
           ) : null}
 
           {magicLinkSent ? (
-            <Text style={styles.successText} accessibilityRole="alert">
+            <Text
+              style={[
+                styles.successText,
+                { color: theme.success, backgroundColor: theme.surface },
+              ]}
+              accessibilityRole="alert"
+            >
               Te enviamos un enlace mágico a {email}. Revisa tu correo.
             </Text>
           ) : null}
 
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
+            style={[styles.button, { backgroundColor: theme.text }, loading && styles.buttonDisabled]}
             onPress={handleSignIn}
             disabled={loading}
             accessibilityLabel="Iniciar sesión"
             accessibilityRole="button"
           >
             {loading ? (
-              <ActivityIndicator color="#FFFFFF" />
+              <ActivityIndicator color={theme.background} />
             ) : (
-              <Text style={styles.buttonText}>Iniciar sesión</Text>
+              <Text style={[styles.buttonText, { color: theme.background }]}>Iniciar sesión</Text>
             )}
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.googleButton, loading && styles.buttonDisabled]}
+            style={[
+              styles.googleButton,
+              { backgroundColor: theme.surfaceElevated, borderColor: theme.border },
+              loading && styles.buttonDisabled,
+            ]}
             onPress={handleGoogleSignIn}
             disabled={loading}
             accessibilityLabel="Continuar con Google"
             accessibilityRole="button"
           >
-            <Text style={styles.googleButtonText}>G  Continuar con Google</Text>
+            <Text style={[styles.googleButtonText, { color: theme.text }]}>
+              G  Continuar con Google
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -162,17 +194,17 @@ export default function LoginScreen() {
             accessibilityLabel="Enviar enlace mágico al correo"
             accessibilityRole="button"
           >
-            <Text style={styles.magicLinkText}>Enviar enlace mágico</Text>
+            <Text style={[styles.magicLinkText, { color: theme.primary }]}>Enviar enlace mágico</Text>
           </TouchableOpacity>
 
           {__DEV__ && (
             <TouchableOpacity
-              style={styles.anonymousButton}
+              style={[styles.anonymousButton, { borderColor: theme.border }]}
               onPress={handleContinueAnonymously}
-              accessibilityLabel="Continuar anonimamente"
+              accessibilityLabel="Continuar anónimamente"
               accessibilityRole="button"
             >
-              <Text style={styles.anonymousButtonText}>Continuar Anonimamente</Text>
+              <Text style={[styles.anonymousButtonText, { color: theme.text }]}>Continuar anónimamente</Text>
             </TouchableOpacity>
           )}
 
@@ -182,9 +214,9 @@ export default function LoginScreen() {
             accessibilityLabel="Ir a la pantalla de registro"
             accessibilityRole="link"
           >
-            <Text style={styles.linkText}>
+            <Text style={[styles.linkText, { color: theme.muted }]}>
               ¿No tienes cuenta?{' '}
-              <Text style={styles.linkTextBold}>Regístrate</Text>
+              <Text style={[styles.linkTextBold, { color: theme.text }]}>Regístrate</Text>
             </Text>
           </TouchableOpacity>
         </View>
@@ -196,7 +228,6 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
   },
   scrollContent: {
     flexGrow: 1,
@@ -207,14 +238,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 40,
   },
+  logoMark: {
+    width: 72,
+    height: 72,
+    marginBottom: 12,
+  },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#1a1a1a',
   },
   subtitle: {
     fontSize: 16,
-    color: '#6B7280',
     marginTop: 8,
   },
   form: {
@@ -226,59 +260,49 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
     marginBottom: 6,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 10,
+    borderRadius: 8,
     padding: 14,
     fontSize: 16,
-    color: '#1a1a1a',
-    backgroundColor: '#F9FAFB',
   },
   errorText: {
-    color: '#DC2626',
     fontSize: 14,
     marginBottom: 16,
     textAlign: 'center',
   },
   successText: {
-    color: '#059669',
     fontSize: 14,
     marginBottom: 16,
     textAlign: 'center',
-    backgroundColor: '#ECFDF5',
     padding: 12,
     borderRadius: 8,
   },
   button: {
-    backgroundColor: '#1a1a1a',
     paddingVertical: 16,
-    borderRadius: 10,
+    borderRadius: 8,
     alignItems: 'center',
     marginBottom: 12,
+    minHeight: 44,
   },
   buttonDisabled: {
     opacity: 0.6,
   },
   buttonText: {
-    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
   googleButton: {
-    backgroundColor: '#FFFFFF',
     paddingVertical: 14,
-    borderRadius: 10,
+    borderRadius: 8,
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#D1D5DB',
     marginBottom: 12,
+    minHeight: 44,
   },
   googleButtonText: {
-    color: '#374151',
     fontSize: 16,
     fontWeight: '600',
   },
@@ -286,9 +310,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: 'center',
     marginBottom: 20,
+    minHeight: 44,
   },
   magicLinkText: {
-    color: '#6366F1',
     fontSize: 14,
     fontWeight: '500',
   },
@@ -297,23 +321,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 10,
+    borderRadius: 8,
+    minHeight: 44,
   },
   anonymousButtonText: {
-    color: '#374151',
     fontSize: 14,
     fontWeight: '600',
   },
   linkContainer: {
     alignItems: 'center',
+    minHeight: 44,
+    justifyContent: 'center',
   },
   linkText: {
     fontSize: 14,
-    color: '#6B7280',
   },
   linkTextBold: {
-    color: '#1a1a1a',
     fontWeight: '600',
   },
 });

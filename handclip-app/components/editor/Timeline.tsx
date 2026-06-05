@@ -30,7 +30,7 @@ export default function Timeline({
   const [showZoomIndicator, setShowZoomIndicator] = useState(false);
   const initialDistance = useRef<number | null>(null);
   const initialZoom = useRef<number>(1);
-  const zoomIndicatorTimeout = useRef<NodeJS.Timeout | null>(null);
+  const zoomIndicatorTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { width: screenWidth } = useWindowDimensions();
 
   const getDistance = (touches: { pageX: number; pageY: number }[]) => {

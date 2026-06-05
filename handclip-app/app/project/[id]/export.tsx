@@ -29,7 +29,7 @@ export default function ExportScreen() {
         setProgress(result.progress);
         setStatus(result.status as typeof status);
 
-        if (result.status === 'COMPLETED' && result.result?.outputUrl) {
+        if (result.status === 'COMPLETED' && typeof result.result?.outputUrl === 'string') {
           setOutputUrl(result.result.outputUrl);
         } else if (result.status === 'FAILED') {
           setError('La exportación falló. Intenta de nuevo.');

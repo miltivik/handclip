@@ -145,6 +145,8 @@ describe('OAuthAttemptManager', () => {
     );
     // Clean up the dangling promise
     blockResolve({ access: 'a', refresh: 'r', expires: 1 });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(connections.upsertCredentials).not.toHaveBeenCalled();
   });
 
   it('rejects unknown attempt ids', async () => {

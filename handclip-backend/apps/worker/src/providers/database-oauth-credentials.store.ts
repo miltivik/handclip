@@ -42,7 +42,13 @@ export class DatabaseOAuthCredentialsStore {
       .eq('user_id', userId)
       .eq('is_active', true)
       .single();
-    if (error || !data) {
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return null;
+      }
+      throw new Error(`Failed to load OAuth credentials: ${error.message}`);
+    }
+    if (!data) {
       return null;
     }
     const row = data as ConnectionRow;
@@ -52,7 +58,9 @@ export class DatabaseOAuthCredentialsStore {
     if (!result) {
       return null;
     }
-    await this.persistRefresh(row.id, result.newCredentials);
+    if (JSON.stringify(credentials) !== JSON.stringify(result.newCredentials)) {
+      await this.persistRefresh(row.id, result.newCredentials);
+    }
     return {
       apiKey: result.apiKey,
       provider: row.provider,
@@ -76,7 +84,7 @@ export class DatabaseOAuthCredentialsStore {
     credentials: { access: string; refresh: string; expires: number; [key: string]: unknown },
   ): Promise<void> {
     const encrypted = encryptJson(credentials, this.key.toString('base64'));
-    await this.supabase
+    const { error } = await this.supabase
       .from('ai_provider_connections')
       .update({
         credentials_ciphertext: encrypted.credentialsCiphertext,
@@ -85,5 +93,8 @@ export class DatabaseOAuthCredentialsStore {
         updated_at: new Date().toISOString(),
       })
       .eq('id', rowId);
+    if (error) {
+      throw new Error(`Failed to persist refreshed OAuth credentials: ${error.message}`);
+    }
   }
 }

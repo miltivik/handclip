@@ -5,7 +5,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@handclip/shared': fileURLToPath(
-        new URL('../../dist/libs/shared/src/index.js', import.meta.url),
+        new URL('../../dist/libs/shared/src', import.meta.url),
       ),
     },
   },

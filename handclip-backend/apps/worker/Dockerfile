@@ -1,5 +1,5 @@
 # Stage 1: Install dependencies
-FROM node:20-alpine AS deps
+FROM node:22.19-alpine AS deps
 
 RUN corepack enable pnpm
 
@@ -9,6 +9,7 @@ WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json ./
 COPY packages ./packages
 COPY libs ./libs
+COPY apps/worker/package.json ./apps/worker/package.json
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
@@ -23,14 +24,21 @@ COPY apps/worker ./apps/worker
 RUN pnpm run build --filter=@handclip/worker
 
 # Stage 3: Production runtime
-FROM node:20-alpine AS production
+FROM node:22.19-alpine AS production
 
 RUN corepack enable pnpm
 
 WORKDIR /app
 
-# Copy built artifacts and production node_modules
-COPY --from=build /app/apps/worker/dist ./apps/worker/dist
+# Copy built artifacts and pnpm workspace links
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/apps/worker/node_modules ./apps/worker/node_modules
+COPY --from=build /app/libs ./libs
+COPY --from=build /app/dist/libs/shared ./libs/shared/dist
 COPY --from=build /app/node_modules ./node_modules
 
-CMD ["node", "apps/worker/dist/main"]
+WORKDIR /app/apps/worker
+
+ENV NODE_PATH=/app/apps/worker/node_modules:/app/libs/shared/node_modules:/app/node_modules
+
+CMD ["node", "../../dist/apps/worker/src/main.js"]

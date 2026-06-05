@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
-import { FlatList, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { api, Project } from '../../services/api';
 import { useAuthStore } from '../../stores/auth.store';
 import EmptyState from '../../components/ui/EmptyState';
+import { useAppTheme } from '../../lib/theme';
 
 interface ProjectCardProps {
   project: Project;
@@ -11,24 +12,29 @@ interface ProjectCardProps {
 }
 
 function ProjectCard({ project, onPress }: ProjectCardProps) {
+  const { theme } = useAppTheme();
+
   return (
-    <TouchableOpacity 
-      style={styles.card} 
-      onPress={onPress} 
+    <TouchableOpacity
+      style={[
+        styles.card,
+        { backgroundColor: theme.surface, borderColor: theme.border },
+      ]}
+      onPress={onPress}
       activeOpacity={0.7}
       accessibilityLabel={`Abrir proyecto ${project.name || 'Proyecto sin nombre'}`}
       accessibilityRole="button"
     >
       <View style={styles.cardContent}>
-        <Text style={styles.cardTitle} numberOfLines={1}>
+        <Text style={[styles.cardTitle, { color: theme.text }]} numberOfLines={1}>
           {project.name || 'Proyecto sin nombre'}
         </Text>
-        <Text style={styles.cardMeta}>
+        <Text style={[styles.cardMeta, { color: theme.muted }]}>
           {project.status ?? 'Sin estado'} · {new Date(project.createdAt).toLocaleDateString()}
         </Text>
       </View>
       <View style={styles.cardArrow}>
-        <Text style={styles.arrow}>{'›'}</Text>
+        <Text style={[styles.arrow, { color: theme.muted }]}>›</Text>
       </View>
     </TouchableOpacity>
   );
@@ -36,17 +42,21 @@ function ProjectCard({ project, onPress }: ProjectCardProps) {
 
 export default function HomeTab() {
   const router = useRouter();
+  const { theme } = useAppTheme();
   const isAnonymous = useAuthStore((state) => state.isAnonymous);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [isLoading, setIsLoading] = useState(!isAnonymous);
+  const [isLoading, setIsLoading] = useState(isAuthenticated && !isAnonymous);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isAnonymous) {
+    if (isAnonymous || !isAuthenticated) {
       setProjects([]);
       setIsLoading(false);
+      setError(null);
       return;
     }
+    setIsLoading(true);
     api.getProjects()
       .then((data) => {
         setProjects(data);
@@ -58,7 +68,7 @@ export default function HomeTab() {
       .finally(() => {
         setIsLoading(false);
       });
-  }, [isAnonymous]);
+  }, [isAnonymous, isAuthenticated]);
 
   const handleProjectPress = (projectId: string) => {
     router.push(`/project/${projectId}`);
@@ -69,6 +79,7 @@ export default function HomeTab() {
   };
 
   const handleRetry = () => {
+    if (!isAuthenticated || isAnonymous) return;
     setIsLoading(true);
     setError(null);
     api.getProjects()
@@ -84,23 +95,39 @@ export default function HomeTab() {
       });
   };
 
+  if (!isAuthenticated && !isAnonymous) {
+    return (
+      <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
+        <EmptyState
+          icon="person-outline"
+          title="Inicia sesión para continuar"
+          subtitle="Crea una cuenta para guardar proyectos y usar análisis IA."
+          ctaLabel="Crear cuenta o iniciar sesión"
+          onCtaPress={() => router.push('/login')}
+        />
+      </View>
+    );
+  }
+
   if (isAnonymous) {
     return (
-      <View style={styles.centerContainer}>
+      <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
         <EmptyState
           icon="folder-outline"
-          title="Modo exploracion"
-          subtitle="Crea una cuenta para guardar proyectos y usar analisis IA."
-          ctaLabel="Crear cuenta o iniciar sesion"
-          onCtaPress={() => router.push('/(auth)/login')}
+          title="Modo exploración"
+          subtitle="Crea una cuenta para guardar proyectos y usar análisis IA."
+          ctaLabel="Crear cuenta o iniciar sesión"
+          onCtaPress={() => router.push('/login')}
         />
         <TouchableOpacity
-          style={styles.importButton}
+          style={[styles.importButton, { backgroundColor: theme.primary }]}
           onPress={handleImportVideo}
-          accessibilityLabel="Explorar importacion"
+          accessibilityLabel="Explorar importación"
           accessibilityRole="button"
         >
-          <Text style={styles.importButtonText}>Explorar importacion</Text>
+          <Text style={[styles.importButtonText, { color: theme.primaryText }]}>
+            Explorar importación
+          </Text>
         </TouchableOpacity>
       </View>
     );
@@ -108,16 +135,16 @@ export default function HomeTab() {
 
   if (isLoading) {
     return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#007AFF" accessibilityLabel="Cargando proyectos" />
-        <Text style={styles.loadingText}>Cargando proyectos...</Text>
+      <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
+        <ActivityIndicator size="large" color={theme.primary} accessibilityLabel="Cargando proyectos" />
+        <Text style={[styles.loadingText, { color: theme.muted }]}>Cargando proyectos...</Text>
       </View>
     );
   }
 
   if (error) {
     return (
-      <View style={styles.centerContainer}>
+      <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
         <EmptyState
           icon="alert-circle-outline"
           title="Error al cargar"
@@ -131,7 +158,7 @@ export default function HomeTab() {
 
   if (projects.length === 0) {
     return (
-      <View style={styles.centerContainer}>
+      <View style={[styles.centerContainer, { backgroundColor: theme.background }]}>
         <EmptyState
           icon="folder-outline"
           title="Sin proyectos"
@@ -144,18 +171,7 @@ export default function HomeTab() {
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Proyectos</Text>
-        <TouchableOpacity
-          style={styles.importButton}
-          onPress={handleImportVideo}
-          accessibilityLabel="Importar video"
-          accessibilityRole="button"
-        >
-          <Text style={styles.importButtonText}>Importar</Text>
-        </TouchableOpacity>
-      </View>
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
       <FlatList
         data={projects}
         keyExtractor={(item) => item.id}
@@ -175,35 +191,20 @@ export default function HomeTab() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
   },
   centerContainer: {
     flex: 1,
-    backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1a1a1a',
-  },
   importButton: {
-    backgroundColor: '#007AFF',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 8,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   importButtonText: {
-    color: '#fff',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -213,8 +214,8 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f9f9f9',
-    borderRadius: 12,
+    borderRadius: 8,
+    borderWidth: 1,
     padding: 16,
     marginBottom: 12,
   },
@@ -224,23 +225,19 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1a1a1a',
     marginBottom: 4,
   },
   cardMeta: {
     fontSize: 13,
-    color: '#666',
   },
   cardArrow: {
     marginLeft: 8,
   },
   arrow: {
     fontSize: 24,
-    color: '#ccc',
   },
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: '#666',
   },
 });

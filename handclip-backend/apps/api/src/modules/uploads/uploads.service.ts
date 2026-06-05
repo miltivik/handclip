@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { createWriteStream, createReadStream, existsSync, unlinkSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -76,12 +76,16 @@ export class UploadsService {
 
   async uploadChunk(
     uploadId: string,
+    userId: string,
     chunkIndex: number,
     chunk: Buffer,
   ): Promise<{ received: number; total: number }> {
     const metadata = this.uploads.get(uploadId);
     if (!metadata) {
       throw new BadRequestException('Upload not found or expired');
+    }
+    if (metadata.userId !== userId) {
+      throw new ForbiddenException('Upload does not belong to this user');
     }
 
     const chunkPath = join(metadata.tempDir, `chunk-${chunkIndex}`);
@@ -103,6 +107,9 @@ export class UploadsService {
     if (!metadata) {
       throw new BadRequestException('Upload not found or expired');
     }
+    if (metadata.userId !== userId) {
+      throw new ForbiddenException('Upload does not belong to this user');
+    }
 
     const outputPath = join(metadata.tempDir, 'output.' + metadata.extension);
 
@@ -119,7 +126,12 @@ export class UploadsService {
     }
 
     // Upload to Supabase Storage
-    const videoUrl = await this.uploadToSupabase(outputPath, uploadId, metadata.extension);
+    const videoUrl = await this.uploadToSupabase(
+      outputPath,
+      userId,
+      uploadId,
+      metadata.extension,
+    );
 
     // Cleanup
     this.cleanup(metadata);
@@ -197,12 +209,13 @@ export class UploadsService {
 
   private async uploadToSupabase(
     filePath: string,
+    userId: string,
     uploadId: string,
     extension: string,
   ): Promise<string> {
     const client = this.supabaseService.getServiceRoleClient();
     const bucket = 'source-videos';
-    const destinationPath = `${uploadId}/input.${extension}`;
+    const destinationPath = `${userId}/${uploadId}/input.${extension}`;
 
     const fileBuffer = await this.readFileBuffer(filePath);
 
@@ -217,9 +230,15 @@ export class UploadsService {
       throw new BadRequestException(`Failed to upload to storage: ${error.message}`);
     }
 
-    const { data: urlData } = client.storage.from(bucket).getPublicUrl(destinationPath);
+    const { data: urlData, error: signError } = await client.storage
+      .from(bucket)
+      .createSignedUrl(destinationPath, 3600);
 
-    return urlData.publicUrl;
+    if (signError || !urlData?.signedUrl) {
+      throw new BadRequestException(`Failed to sign uploaded video: ${signError?.message}`);
+    }
+
+    return urlData.signedUrl;
   }
 
   private async readFileBuffer(filePath: string): Promise<Buffer> {

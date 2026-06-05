@@ -1,19 +1,22 @@
 import { useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useAuthStore } from '../../stores/auth.store';
+import { useAppTheme } from '../../lib/theme';
 
 export default function SignupScreen() {
+  const { theme } = useAppTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -64,7 +67,7 @@ export default function SignupScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: theme.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView
@@ -72,19 +75,31 @@ export default function SignupScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
-          <Text style={styles.title}>HandClip</Text>
-          <Text style={styles.subtitle}>Crea tu cuenta gratuita</Text>
+          <Image
+            source={require('../../assets/logo.png')}
+            style={styles.logoMark}
+            resizeMode="contain"
+            accessibilityLabel="HandClip"
+            accessibilityIgnoresInvertColors
+          />
+          <Text style={[styles.title, { color: theme.text }]} accessibilityRole="header">
+            HandClip
+          </Text>
+          <Text style={[styles.subtitle, { color: theme.muted }]}>Crea tu cuenta gratuita</Text>
         </View>
 
         <View style={styles.form}>
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Correo electrónico</Text>
+            <Text style={[styles.label, { color: theme.text }]}>Correo electrónico</Text>
             <TextInput
-              style={styles.input}
+              style={[
+                styles.input,
+                { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text },
+              ]}
               value={email}
               onChangeText={setEmail}
               placeholder="tu@email.com"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={theme.muted}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
@@ -94,13 +109,16 @@ export default function SignupScreen() {
           </View>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Contraseña</Text>
+            <Text style={[styles.label, { color: theme.text }]}>Contraseña</Text>
             <TextInput
-              style={styles.input}
+              style={[
+                styles.input,
+                { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text },
+              ]}
               value={password}
               onChangeText={setPassword}
               placeholder="Mínimo 6 caracteres"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={theme.muted}
               secureTextEntry
               accessibilityLabel="Contraseña"
               textContentType="newPassword"
@@ -108,13 +126,16 @@ export default function SignupScreen() {
           </View>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Confirmar contraseña</Text>
+            <Text style={[styles.label, { color: theme.text }]}>Confirmar contraseña</Text>
             <TextInput
-              style={styles.input}
+              style={[
+                styles.input,
+                { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text },
+              ]}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
               placeholder="Repite tu contraseña"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={theme.muted}
               secureTextEntry
               accessibilityLabel="Confirmar contraseña"
               textContentType="newPassword"
@@ -122,31 +143,39 @@ export default function SignupScreen() {
           </View>
 
           {errorMessage ? (
-            <Text style={styles.errorText} accessibilityRole="alert">{errorMessage}</Text>
+            <Text style={[styles.errorText, { color: theme.danger }]} accessibilityRole="alert">
+              {errorMessage}
+            </Text>
           ) : null}
 
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
+            style={[styles.button, { backgroundColor: theme.text }, loading && styles.buttonDisabled]}
             onPress={handleSignUp}
             disabled={loading}
             accessibilityLabel="Crear cuenta"
             accessibilityRole="button"
           >
             {loading ? (
-              <ActivityIndicator color="#FFFFFF" />
+              <ActivityIndicator color={theme.background} />
             ) : (
-              <Text style={styles.buttonText}>Crear cuenta</Text>
+              <Text style={[styles.buttonText, { color: theme.background }]}>Crear cuenta</Text>
             )}
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.googleButton, loading && styles.buttonDisabled]}
+            style={[
+              styles.googleButton,
+              { backgroundColor: theme.surfaceElevated, borderColor: theme.border },
+              loading && styles.buttonDisabled,
+            ]}
             onPress={handleGoogleSignUp}
             disabled={loading}
             accessibilityLabel="Registrarse con Google"
             accessibilityRole="button"
           >
-            <Text style={styles.googleButtonText}>G  Registrarse con Google</Text>
+            <Text style={[styles.googleButtonText, { color: theme.text }]}>
+              G  Registrarse con Google
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -155,9 +184,9 @@ export default function SignupScreen() {
             accessibilityLabel="Ir a inicio de sesión"
             accessibilityRole="link"
           >
-            <Text style={styles.linkText}>
+            <Text style={[styles.linkText, { color: theme.muted }]}>
               ¿Ya tienes cuenta?{' '}
-              <Text style={styles.linkTextBold}>Inicia sesión</Text>
+              <Text style={[styles.linkTextBold, { color: theme.text }]}>Inicia sesión</Text>
             </Text>
           </TouchableOpacity>
         </View>
@@ -169,7 +198,6 @@ export default function SignupScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
   },
   scrollContent: {
     flexGrow: 1,
@@ -180,14 +208,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 40,
   },
+  logoMark: {
+    width: 72,
+    height: 72,
+    marginBottom: 12,
+  },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#1a1a1a',
   },
   subtitle: {
     fontSize: 16,
-    color: '#6B7280',
     marginTop: 8,
   },
   form: {
@@ -199,62 +230,54 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
     marginBottom: 6,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 10,
+    borderRadius: 8,
     padding: 14,
     fontSize: 16,
-    color: '#1a1a1a',
-    backgroundColor: '#F9FAFB',
   },
   errorText: {
-    color: '#DC2626',
     fontSize: 14,
     marginBottom: 16,
     textAlign: 'center',
   },
   button: {
-    backgroundColor: '#1a1a1a',
     paddingVertical: 16,
-    borderRadius: 10,
+    borderRadius: 8,
     alignItems: 'center',
     marginBottom: 12,
+    minHeight: 44,
   },
   buttonDisabled: {
     opacity: 0.6,
   },
   buttonText: {
-    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
   googleButton: {
-    backgroundColor: '#FFFFFF',
     paddingVertical: 14,
-    borderRadius: 10,
+    borderRadius: 8,
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#D1D5DB',
     marginBottom: 20,
+    minHeight: 44,
   },
   googleButtonText: {
-    color: '#374151',
     fontSize: 16,
     fontWeight: '600',
   },
   linkContainer: {
     alignItems: 'center',
+    minHeight: 44,
+    justifyContent: 'center',
   },
   linkText: {
     fontSize: 14,
-    color: '#6B7280',
   },
   linkTextBold: {
-    color: '#1a1a1a',
     fontWeight: '600',
   },
 });

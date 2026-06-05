@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../services/supabase';
+import { completeAuthCallback, createAuthRedirectUri } from '../lib/auth-callback';
 
 interface AuthState {
   session: Session | null;
@@ -41,19 +42,21 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   signInWithGoogle: async () => {
+    const redirectTo = createAuthRedirectUri();
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: 'handclip://auth/callback',
-        skipBrowserRedirect: false,
+        redirectTo,
+        skipBrowserRedirect: true,
       },
     });
     if (error) throw error;
-    // OAuth flow returns a URL to open — onAuthStateChange handles session update
+    // OAuth flow returns a URL to open; callback result carries session data.
     if (data?.url) {
       const { openAuthSessionAsync } = await import('expo-web-browser');
-      const result = await openAuthSessionAsync(data.url, 'handclip://auth/callback');
+      const result = await openAuthSessionAsync(data.url, redirectTo);
       if (result.type !== 'success') throw new Error('Google sign in cancelled');
+      await completeAuthCallback(result.url);
     }
   },
 
@@ -61,7 +64,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: 'handclip://auth/callback',
+        emailRedirectTo: createAuthRedirectUri(),
       },
     });
     if (error) throw error;

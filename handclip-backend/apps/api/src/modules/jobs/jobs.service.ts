@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { JobStatusDto } from '@handclip/shared';
@@ -47,6 +47,12 @@ export class JobsService {
     musicFadeOut?: number;
     preset: 'tiktok' | 'reels' | 'shorts' | 'draft' | 'hq';
     clipId?: string;
+    // speed: playback multiplier. Validated at API layer; worker should
+    // defensively re-validate before passing to ffmpeg -filter:v "setpts=PTS/speed"
+    speed?: 0.5 | 1 | 2;
+    // textOverlay: optional burn-in subtitle text. Worker must validate
+    // text.length <= 120 and position in ['top','center','bottom'] defensively.
+    textOverlay?: { text: string; position: 'top' | 'center' | 'bottom' } | null;
   }) {
     const job = await this.renderQueue.add('render-video', data, {
       attempts: 2,
@@ -74,9 +80,28 @@ export class JobsService {
   }
 
   async enqueueAnalysis(projectId: string, userId: string, videoUrl: string) {
+    const supabase = this.supabaseService.getServiceRoleClient();
+    const { data: jobsRow, error } = await supabase
+      .from('jobs')
+      .insert({
+        project_id: projectId,
+        type: 'clip_analysis',
+        status: 'queued',
+        progress: 0,
+        result: { pipeline: 'analysis' },
+      })
+      .select()
+      .single();
+
+    if (error || !jobsRow) {
+      throw new Error(`Failed to insert analysis job into DB: ${error?.message}`);
+    }
+
     const transcriptionJob = await this.transcriptionQueue.add(
       'transcribe',
-      { projectId, userId, videoUrl } as AnalysisJob,
+      { projectId, userId, videoUrl, trackingJobId: jobsRow.id } as AnalysisJob & {
+        trackingJobId: string;
+      },
       {
         attempts: 3,
         backoff: {
@@ -85,22 +110,12 @@ export class JobsService {
         },
       },
     );
-
-    const supabase = this.supabaseService.getServiceRoleClient();
-    const { data: jobsRow, error } = await supabase
+    const { error: updateError } = await supabase
       .from('jobs')
-      .insert({
-        project_id: projectId,
-        type: 'transcription',
-        status: 'queued',
-        progress: 0,
-        bullmq_id: transcriptionJob.id as string,
-      })
-      .select()
-      .single();
-
-    if (error || !jobsRow) {
-      throw new Error(`Failed to insert analysis job into DB: ${error?.message}`);
+      .update({ bullmq_id: transcriptionJob.id as string })
+      .eq('id', jobsRow.id);
+    if (updateError) {
+      throw new Error(`Failed to link analysis job to queue: ${updateError.message}`);
     }
 
     return {
@@ -124,7 +139,10 @@ export class JobsService {
     const jobsRow = row as JobsRow;
 
     // If queued or active, check BullMQ for real-time progress
-    if (jobsRow.status === 'queued' || jobsRow.status === 'active') {
+    if (
+      jobsRow.type !== 'clip_analysis' &&
+      (jobsRow.status === 'queued' || jobsRow.status === 'active')
+    ) {
       const queues = [this.transcriptionQueue, this.clipAnalysisQueue, this.renderQueue];
       for (const queue of queues) {
         const bullJob = await queue.getJob(jobsRow.bullmq_id);
@@ -155,6 +173,28 @@ export class JobsService {
       progress: jobsRow.progress,
       returnvalue: result ?? undefined,
     };
+  }
+
+  async getJobForUser(jobId: string, userId: string): Promise<JobStatusDto> {
+    const supabase = this.supabaseService.getServiceRoleClient();
+    const { data: job, error: jobError } = await supabase
+      .from('jobs')
+      .select('project_id')
+      .eq('id', jobId)
+      .single();
+    if (jobError || !job) {
+      throw new NotFoundException('Job not found');
+    }
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select('id')
+      .eq('id', job.project_id)
+      .eq('user_id', userId)
+      .single();
+    if (projectError || !project) {
+      throw new NotFoundException('Job not found');
+    }
+    return this.getJob(jobId);
   }
 
   getJobProgress(jobId: string): JobStatusDto {

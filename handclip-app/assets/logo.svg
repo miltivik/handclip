@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">HandClip logo</title>
+  <desc id="desc">Black axolotl mark on a rounded light app-icon tile.</desc>
+  <rect x="72" y="72" width="880" height="880" rx="252" fill="#F2F2EF"/>
+  <g transform="translate(512 512) scale(.76) translate(-512 -512)">
+  <g fill="none" stroke="#050505" stroke-linecap="round" stroke-linejoin="round">
+    <g id="left-gills">
+      <path d="M386 431 C337 393 286 334 246 238" stroke-width="50"/>
+      <path d="M359 409 C345 383 334 356 326 329" stroke-width="19"/>
+      <path d="M344 392 C325 371 306 348 289 324" stroke-width="19"/>
+      <path d="M330 374 C313 349 300 325 290 300" stroke-width="19"/>
+      <path d="M315 354 C295 333 276 312 258 289" stroke-width="19"/>
+      <path d="M300 331 C285 306 273 282 264 257" stroke-width="19"/>
+      <path d="M282 303 C264 283 246 263 228 241" stroke-width="18"/>
+      <path d="M265 272 C257 248 251 226 247 205" stroke-width="18"/>
+      <path d="M368 416 C387 395 404 372 418 348" stroke-width="19"/>
+      <path d="M353 399 C375 383 395 364 413 343" stroke-width="19"/>
+      <path d="M339 380 C358 358 374 335 387 310" stroke-width="19"/>
+      <path d="M323 360 C345 344 365 326 383 307" stroke-width="19"/>
+      <path d="M306 335 C321 311 334 286 344 260" stroke-width="19"/>
+      <path d="M288 306 C301 283 312 258 319 233" stroke-width="18"/>
+      <path d="M269 275 C274 249 277 225 277 202" stroke-width="18"/>
+
+      <path d="M324 519 C255 479 188 443 118 420" stroke-width="44"/>
+      <path d="M292 500 C277 475 263 450 250 424" stroke-width="18"/>
+      <path d="M269 487 C250 464 230 441 210 418" stroke-width="18"/>
+      <path d="M244 474 C223 454 200 436 175 419" stroke-width="18"/>
+      <path d="M219 462 C193 448 166 436 137 427" stroke-width="18"/>
+      <path d="M193 450 C168 443 143 437 118 433" stroke-width="18"/>
+      <path d="M302 508 C326 488 349 467 369 444" stroke-width="18"/>
+      <path d="M279 495 C307 483 334 468 359 450" stroke-width="18"/>
+      <path d="M254 482 C282 477 310 468 336 457" stroke-width="18"/>
+      <path d="M228 469 C257 471 285 469 313 464" stroke-width="18"/>
+      <path d="M202 456 C228 465 255 471 283 474" stroke-width="18"/>
+      <path d="M176 444 C199 458 224 469 250 478" stroke-width="18"/>
+      <path d="M148 434 C168 451 190 465 215 477" stroke-width="17"/>
+
+      <path d="M315 594 C242 595 177 594 123 592" stroke-width="40"/>
+      <path d="M284 593 C257 576 231 558 207 539" stroke-width="17"/>
+      <path d="M257 593 C230 581 204 567 179 552" stroke-width="17"/>
+      <path d="M229 594 C202 588 176 581 150 573" stroke-width="17"/>
+      <path d="M201 594 C174 596 147 598 121 599" stroke-width="17"/>
+      <path d="M284 598 C256 617 228 635 200 652" stroke-width="17"/>
+      <path d="M256 599 C230 615 203 629 176 642" stroke-width="17"/>
+      <path d="M228 599 C203 611 177 621 151 630" stroke-width="17"/>
+      <path d="M199 598 C175 605 151 611 127 615" stroke-width="17"/>
+    </g>
+    <use href="#left-gills" transform="translate(1024 0) scale(-1 1)"/>
+  </g>
+
+  <path fill="#050505" d="M255 556C255 455 311 386 422 357C456 348 482 344 499 344C507 320 521 307 539 307C557 307 571 320 581 344C697 359 769 430 769 554C769 638 718 694 640 730C633 745 641 766 663 791C623 784 586 768 552 743C538 733 525 728 512 728C499 728 486 733 472 743C438 768 401 784 361 791C383 766 391 745 384 730C306 694 255 638 255 556Z"/>
+  <path fill="#fff" d="M287 546C287 437 377 384 512 384C647 384 737 437 737 546C737 621 684 664 615 700C579 719 549 745 512 745C475 745 445 719 409 700C340 664 287 621 287 546Z"/>
+
+  <g fill="#050505">
+    <path d="M337 675C323 698 314 722 313 751C333 729 349 733 356 766C369 733 392 719 433 735C403 706 371 687 337 675Z"/>
+    <path d="M687 675C701 698 710 722 711 751C691 729 675 733 668 766C655 733 632 719 591 735C621 706 653 687 687 675Z"/>
+    <ellipse cx="384" cy="542" rx="47" ry="53"/>
+    <ellipse cx="640" cy="542" rx="47" ry="53"/>
+    <circle cx="399" cy="525" r="15" fill="#fff"/>
+    <circle cx="655" cy="525" r="15" fill="#fff"/>
+    <ellipse cx="480" cy="581" rx="11" ry="19" transform="rotate(-28 480 581)"/>
+    <ellipse cx="544" cy="581" rx="11" ry="19" transform="rotate(28 544 581)"/>
+  </g>
+
+  <path d="M411 618C455 671 570 681 613 618" fill="none" stroke="#050505" stroke-width="34" stroke-linecap="round"/>
+  </g>
+</svg>
