@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { AiSubscriptionProvider, EncryptedCredentials } from '@handclip/shared';
 import { AiConnectionsService, OAuthCredentials } from './ai-connections.service';
+export { OAuthCredentials };
 
 export type AttemptStatus =
   | 'initializing'
@@ -236,7 +237,11 @@ export class OAuthAttemptManager {
     }
 
     try {
-      await this.connections.upsertCredentials(attempt.userId, attempt.provider, credentials);
+      await this.connections.upsertConnection(attempt.userId, {
+        provider: attempt.provider,
+        connectionType: 'oauth',
+        credentials,
+      });
       attempt.status = 'connected';
     } catch (error) {
       attempt.status = 'failed';

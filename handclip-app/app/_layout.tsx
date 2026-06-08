@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useAuthStore } from '../stores/auth.store';
 import { useAppTheme } from '../lib/theme';
+import { useResumeActiveJobs } from '../hooks/useResumeActiveJobs';
 
 function AuthProvider({ children }: { children: React.ReactNode }) {
   const initAuth = useAuthStore((state) => state.initAuth);
@@ -33,14 +34,27 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     let sub: { remove(): void } | undefined;
     import('expo-notifications').then((Notifications) => {
       sub = Notifications.addNotificationResponseReceivedListener((response) => {
-        const data = response.notification.request.content.data;
+        const data = response.notification.request.content.data as
+          | { projectId?: string; jobId?: string; type?: string }
+          | undefined;
         if (data?.projectId) {
-          router.push(`/project/${data.projectId}`);
+          const projectId = data.projectId;
+          // For analysis/edit-prompt jobs, deep-link to the project page
+          // (which fetches the latest state). For render jobs, link to the
+          // project's library if we have an exportId, else project root.
+          if (data.type === 'export_complete' && data.jobId) {
+            router.push(`/project/${projectId}/export?jobId=${data.jobId}`);
+          } else {
+            router.push(`/project/${projectId}`);
+          }
         }
       });
     });
     return () => { sub?.remove(); };
   }, []);
+
+  // Resume any in-flight jobs (server-side continuity).
+  useResumeActiveJobs();
 
   return children;
 }

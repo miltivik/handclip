@@ -11,7 +11,7 @@ const KEY = Buffer.alloc(32, 7).toString('base64');
 
 function buildConnectionsMock() {
   return {
-    upsertCredentials: jest.fn(async (_u: string, _p: AiSubscriptionProvider, _c: OAuthCredentials) => {}),
+    upsertConnection: jest.fn(async () => {}),
   } as unknown as AiConnectionsService;
 }
 
@@ -66,10 +66,18 @@ describe('OAuthAttemptManager', () => {
     await new Promise((r) => setTimeout(r, 10));
     const status = await manager.get('user-1', started.id);
     expect(status.status).toBe('connected');
-    expect(connections.upsertCredentials).toHaveBeenCalledWith(
+    expect(connections.upsertConnection).toHaveBeenCalledWith(
       'user-1',
-      'openai-codex',
-      expect.objectContaining({ access: 'a', refresh: 'r', expires: 123, accountId: 'acc' }),
+      expect.objectContaining({
+        provider: 'openai-codex',
+        connectionType: 'oauth',
+        credentials: expect.objectContaining({
+          access: 'a',
+          refresh: 'r',
+          expires: 123,
+          accountId: 'acc',
+        }),
+      }),
     );
   });
 
@@ -87,10 +95,13 @@ describe('OAuthAttemptManager', () => {
 
     const result = await manager.submitInput('user-1', started.id, 'paste#code');
     expect(result.status).toBe('connected');
-    expect(connections.upsertCredentials).toHaveBeenCalledWith(
+    expect(connections.upsertConnection).toHaveBeenCalledWith(
       'user-1',
-      'anthropic',
-      expect.objectContaining({ code: 'paste#code' }),
+      expect.objectContaining({
+        provider: 'anthropic',
+        connectionType: 'oauth',
+        credentials: expect.objectContaining({ code: 'paste#code' }),
+      }),
     );
   });
 
@@ -146,7 +157,7 @@ describe('OAuthAttemptManager', () => {
     // Clean up the dangling promise
     blockResolve({ access: 'a', refresh: 'r', expires: 1 });
     await new Promise((r) => setTimeout(r, 10));
-    expect(connections.upsertCredentials).not.toHaveBeenCalled();
+    expect(connections.upsertConnection).not.toHaveBeenCalled();
   });
 
   it('rejects unknown attempt ids', async () => {

@@ -14,6 +14,20 @@ export const ALLOWED_VIDEO_MIMETYPES = [
 ];
 
 export const MAX_VIDEO_SIZE_BYTES = 500 * 1024 * 1024; // 500MB
+export const MAX_AUDIO_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+
+export const ALLOWED_AUDIO_MIMETYPES = [
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/wav',
+  'audio/x-wav',
+  'audio/aac',
+  'audio/mp4',
+  'audio/m4a',
+  'audio/x-m4a',
+  'audio/ogg',
+  'audio/webm',
+];
 
 interface UploadMetadata {
   userId: string;
@@ -31,6 +45,42 @@ export class UploadsService {
   private uploads = new Map<string, UploadMetadata>();
 
   constructor(private readonly supabaseService: SupabaseService) {}
+
+  async uploadAudio(
+    file: Express.Multer.File,
+    userId: string,
+  ): Promise<{ storagePath: string }> {
+    if (!file?.buffer) {
+      throw new BadRequestException('Audio file is required');
+    }
+    if (!ALLOWED_AUDIO_MIMETYPES.includes(file.mimetype)) {
+      throw new BadRequestException(
+        `Invalid audio type. Allowed: ${ALLOWED_AUDIO_MIMETYPES.join(', ')}`,
+      );
+    }
+    if (file.size && file.size > MAX_AUDIO_SIZE_BYTES) {
+      throw new BadRequestException(
+        `Audio too large. Maximum size is ${MAX_AUDIO_SIZE_BYTES / (1024 * 1024)}MB`,
+      );
+    }
+
+    const extension = this.getAudioExtension(file.mimetype, file.originalname);
+    const storagePath = `${userId}/music/${randomUUID()}.${extension}`;
+    const { error } = await this.supabaseService
+      .getServiceRoleClient()
+      .storage
+      .from('source-videos')
+      .upload(storagePath, file.buffer, {
+        contentType: file.mimetype,
+        upsert: false,
+      });
+
+    if (error) {
+      throw new BadRequestException(`Failed to upload audio: ${error.message}`);
+    }
+
+    return { storagePath };
+  }
 
   async initUpload(
     userId: string,
@@ -148,6 +198,25 @@ export class UploadsService {
       'video/x-matroska': 'mkv',
     };
     return extensionMap[mimetype] || 'mp4';
+  }
+
+  private getAudioExtension(mimetype: string, fileName?: string): string {
+    const extensionMap: Record<string, string> = {
+      'audio/mpeg': 'mp3',
+      'audio/mp3': 'mp3',
+      'audio/wav': 'wav',
+      'audio/x-wav': 'wav',
+      'audio/aac': 'aac',
+      'audio/mp4': 'm4a',
+      'audio/m4a': 'm4a',
+      'audio/x-m4a': 'm4a',
+      'audio/ogg': 'ogg',
+      'audio/webm': 'webm',
+    };
+    if (extensionMap[mimetype]) return extensionMap[mimetype];
+
+    const match = fileName?.match(/\.([a-z0-9]{1,8})$/i);
+    return match ? match[1].toLowerCase() : 'mp3';
   }
 
   private async writeChunkToFile(path: string, data: Buffer): Promise<void> {

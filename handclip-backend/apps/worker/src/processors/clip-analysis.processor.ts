@@ -1,9 +1,10 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
-import { ClipCandidate, ClipCandidateSchema, SubtitleSegment } from '@handclip/shared';
+import { ClipCandidate, ClipCandidateSchema, SubtitleSegment, getSkillsForStage } from '@handclip/shared';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../modules/supabase/supabase.service';
-import { DatabaseOAuthCredentialsStore } from '../providers/database-oauth-credentials.store';
+import { NotificationsService } from '../modules/notifications/notifications.service';
+import { DatabaseAiConnectionStore } from '../providers/database-ai-connection.store';
 import { ProviderManager, StageTask } from '../providers/provider-manager';
 const CLIP_ANALYSIS_SYSTEM_PROMPT = `Eres un analista de contenido para redes sociales. Tu tarea es identificar los mejores momentos de una transcripción de video para crear clips cortos virales (TikTok, Reels, Shorts).
 
@@ -66,7 +67,12 @@ const VALID_MOOD_TAGS = new Set([
 interface ClipAnalysisJobData {
   projectId: string;
   userId: string;
-  videoUrl: string;
+  // Storage path (preferred). Clip-analysis currently only uses
+  // transcriptionSegments; sourceVideoPath is kept here for parity with
+  // the transcription/render jobs and to enable LLM video-aware features
+  // in the future.
+  sourceVideoPath?: string;
+  videoUrl?: string;
   transcriptionSegments?: SubtitleSegment[];
   trackingJobId?: string;
 }
@@ -164,15 +170,16 @@ export class ClipAnalysisProcessor extends WorkerHost {
 
   constructor(
     private readonly supabaseService: SupabaseService,
+    private readonly notificationsService: NotificationsService,
     config: ConfigService,
   ) {
     super();
     const encryptionKey = config.getOrThrow<string>('AI_CONNECTIONS_ENCRYPTION_KEY');
-    const databaseStore = new DatabaseOAuthCredentialsStore(
+    const databaseStore = new DatabaseAiConnectionStore(
       supabaseService.getServiceRoleClient(),
       encryptionKey,
     );
-    this.providerManager = new ProviderManager({ databaseOAuthCredentialsStore: databaseStore });
+    this.providerManager = new ProviderManager({ databaseConnectionStore: databaseStore });
   }
 
   async process(job: Job<ClipAnalysisJobData>): Promise<{ clips: ClipCandidate[] }> {
@@ -181,29 +188,36 @@ export class ClipAnalysisProcessor extends WorkerHost {
     const dbProgress = (progress: number) =>
       trackingJobId ? 60 + Math.round(progress * 0.4) : progress;
 
-    const { data: jobRecord, error: jobCreateError } = trackingJobId
-      ? await supabase
-          .from('jobs')
-          .update({ status: 'active', progress: dbProgress(10), bullmq_id: job.id })
-          .eq('id', trackingJobId)
-          .select('id')
-          .single()
-      : await supabase
-          .from('jobs')
-          .insert({
-            project_id: projectId,
-            type: 'clip_analysis',
-            status: 'active',
-            progress: 10,
-            bullmq_id: job.id,
-          })
-          .select('id')
-          .single();
-
-    if (jobCreateError) {
-      console.error(`[ClipAnalysis] Failed to create job record: ${jobCreateError.message}`);
+    let dbJobId: string | undefined;
+    if (trackingJobId) {
+      const { data: jobRecord, error } = await supabase
+        .from('jobs')
+        .update({ status: 'active', progress: dbProgress(10), bullmq_id: job.id })
+        .eq('id', trackingJobId)
+        .select('id')
+        .single();
+      if (error) {
+        console.error(`[ClipAnalysis] Failed to update job: ${error.message}`);
+      }
+      dbJobId = jobRecord?.id;
+    } else {
+      const { data: jobRecord, error } = await supabase
+        .from('jobs')
+        .insert({
+          project_id: projectId,
+          user_id: userId,
+          type: 'clip_analysis',
+          status: 'active',
+          progress: 10,
+          bullmq_id: job.id,
+        })
+        .select('id')
+        .single();
+      if (error) {
+        console.error(`[ClipAnalysis] Failed to create job record: ${error.message}`);
+      }
+      dbJobId = jobRecord?.id;
     }
-    const dbJobId = jobRecord?.id;
 
     await job.updateProgress(10);
     console.log(`[ClipAnalysis] Analyzing clips for project ${projectId}`);
@@ -230,9 +244,10 @@ export class ClipAnalysisProcessor extends WorkerHost {
     console.log(`[ClipAnalysis] Processing ${transcriptionSegments.length} transcription segments`);
 
     // Build the task for ProviderManager
+    const skillRules = getSkillsForStage('clip-analysis');
     const task: StageTask = {
       stage: 'clip-analysis',
-      systemPrompt: CLIP_ANALYSIS_SYSTEM_PROMPT,
+      systemPrompt: skillRules ? `${skillRules}\n\n${CLIP_ANALYSIS_SYSTEM_PROMPT}` : CLIP_ANALYSIS_SYSTEM_PROMPT,
       userPrompt: buildUserPrompt(transcriptionSegments),
       maxTokens: 4000,
       temperature: 0.3,
@@ -313,6 +328,13 @@ export class ClipAnalysisProcessor extends WorkerHost {
         await job.updateProgress(100);
         console.log(`[ClipAnalysis] Completed for project ${projectId}`);
 
+        await this.notificationsService.sendPushNotification(
+          userId,
+          '¡Tu análisis está listo!',
+          `Detectamos ${clips.length} clip${clips.length === 1 ? '' : 's'} candidato${clips.length === 1 ? '' : 's'} en tu video.`,
+          { type: 'analysis_complete', projectId, jobId: dbJobId ?? '' },
+        );
+
         return { clips };
       } catch (err: any) {
         lastError = err;
@@ -341,6 +363,13 @@ export class ClipAnalysisProcessor extends WorkerHost {
     }
 
     await supabase.from('projects').update({ status: 'failed' }).eq('id', projectId);
+
+    await this.notificationsService.sendPushNotification(
+      userId,
+      'El análisis falló',
+      'No se pudo analizar el video. Inténtalo de nuevo.',
+      { type: 'job_failed', projectId, jobId: dbJobId ?? '' },
+    );
 
     throw lastError || new Error('Clip analysis failed after all retries');
   }

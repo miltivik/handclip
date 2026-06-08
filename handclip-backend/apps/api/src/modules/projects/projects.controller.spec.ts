@@ -4,7 +4,7 @@ import { ProjectsService } from './projects.service';
 import { JobsService } from '../jobs/jobs.service';
 
 const mockUser = { id: 'user-1' };
-const mockVideoUrl = 'https://signed.example/video.mp4';
+const mockSourceVideoPath = 'user-1/project-1/input.mp4';
 
 function buildController(overrides?: {
   projectsService?: Partial<ProjectsService>;
@@ -12,7 +12,8 @@ function buildController(overrides?: {
 }) {
   return new ProjectsController(
     {
-      getVideoUrl: jest.fn().mockResolvedValue(mockVideoUrl),
+      getSourceVideoPath: jest.fn().mockResolvedValue(mockSourceVideoPath),
+      getVideoUrl: jest.fn().mockResolvedValue('https://signed.example/video.mp4'),
       assertOwnedBy: jest.fn().mockResolvedValue(undefined),
       ...overrides?.projectsService,
     } as unknown as ProjectsService,
@@ -165,6 +166,58 @@ describe('ProjectsController exportClip', () => {
           textOverlay: { text: 123 as unknown as string, position: 'top' },
         })),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('musicUrl validation', () => {
+    it('accepts authenticated user music storage paths', async () => {
+      const controller = buildController();
+      await controller.exportClip(mockUser as any, 'project-1', buildBody({
+        musicUrl: 'user-1/music/theme.mp3',
+      }));
+      expect(controller['jobsService'].enqueueRender).toHaveBeenCalledWith(
+        expect.objectContaining({ musicUrl: 'user-1/music/theme.mp3' }),
+      );
+    });
+
+    it('rejects another user music storage path', async () => {
+      const controller = buildController();
+      await expect(
+        controller.exportClip(mockUser as any, 'project-1', buildBody({
+          musicUrl: 'user-2/music/theme.mp3',
+        })),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(controller['jobsService'].enqueueRender).not.toHaveBeenCalled();
+    });
+
+    it('rejects external music URLs', async () => {
+      const controller = buildController();
+      await expect(
+        controller.exportClip(mockUser as any, 'project-1', buildBody({
+          musicUrl: 'https://example.com/theme.mp3',
+        })),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(controller['jobsService'].enqueueRender).not.toHaveBeenCalled();
+    });
+
+    it('rejects local music file URIs', async () => {
+      const controller = buildController();
+      await expect(
+        controller.exportClip(mockUser as any, 'project-1', buildBody({
+          musicUrl: 'file:///tmp/theme.mp3',
+        })),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(controller['jobsService'].enqueueRender).not.toHaveBeenCalled();
+    });
+
+    it('rejects absolute local music paths', async () => {
+      const controller = buildController();
+      await expect(
+        controller.exportClip(mockUser as any, 'project-1', buildBody({
+          musicUrl: '/tmp/theme.mp3',
+        })),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(controller['jobsService'].enqueueRender).not.toHaveBeenCalled();
     });
   });
 });

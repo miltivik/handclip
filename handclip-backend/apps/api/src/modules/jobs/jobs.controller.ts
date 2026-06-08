@@ -10,10 +10,26 @@ import { CurrentUser, ResolvedUser } from '../auth/current-user.decorator';
 export class JobsController {
   constructor(private readonly jobsService: JobsService) {}
 
-  // analyze endpoint is in ProjectsController to avoid route conflict
+  @Get('jobs/active')
+  async listActiveJobs(@CurrentUser() user: ResolvedUser) {
+    return this.jobsService.listActiveJobsForUser(user.id);
+  }
+
+  @Get('projects/:projectId/jobs/latest')
+  async getLatestJobForProject(
+    @CurrentUser() user: ResolvedUser,
+    @Param('projectId') projectId: string,
+  ) {
+    const job = await this.jobsService.getLatestJobForProject(projectId, user.id);
+    if (!job) return null;
+    return job;
+  }
 
   @Get('jobs/:jobId')
-  async getJobStatus(@CurrentUser() user: ResolvedUser, @Param('jobId') jobId: string) {
+  async getJobStatus(
+    @CurrentUser() user: ResolvedUser,
+    @Param('jobId') jobId: string,
+  ) {
     return this.jobsService.getJobForUser(jobId, user.id);
   }
 
@@ -28,19 +44,16 @@ export class JobsController {
         port: parseInt(process.env.REDIS_PORT || '6379', 10),
       };
 
-      // Listen on all three queue event streams
-      const queueNames = ['transcription', 'clip-analysis', 'render'];
+      const queueNames = ['transcription', 'clip-analysis', 'render', 'edit-prompt'];
       const queueEventsList = queueNames.map(
         (name) => new QueueEvents(name, { connection: redisConfig }),
       );
 
       const handler = async (args: { jobId?: string; data?: any }) => {
         if (args.jobId && args.jobId !== jobId) return;
-
         try {
           const progress = await this.jobsService.getJobForUser(jobId, user.id);
           subscriber.next({ data: JSON.stringify(progress) } as MessageEvent);
-
           if (progress.status === 'COMPLETED' || progress.status === 'FAILED') {
             subscriber.complete();
           }
@@ -55,12 +68,10 @@ export class JobsController {
         qe.on('failed', handler);
       }
 
-      // Fallback: emit current state every 2s while waiting for BullMQ events
       const fallback = setInterval(async () => {
         try {
           const progress = await this.jobsService.getJobForUser(jobId, user.id);
           subscriber.next({ data: JSON.stringify(progress) } as MessageEvent);
-
           if (progress.status === 'COMPLETED' || progress.status === 'FAILED') {
             clearInterval(fallback);
             subscriber.complete();

@@ -36,6 +36,7 @@ COPY --from=build /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=build /app/libs ./libs
 COPY --from=build /app/dist/libs/shared ./libs/shared/dist
 COPY --from=build /app/node_modules ./node_modules
+RUN mkdir -p /app/dist/apps/api && ln -s /app/apps/api/node_modules /app/dist/apps/api/node_modules
 
 EXPOSE 3000
 

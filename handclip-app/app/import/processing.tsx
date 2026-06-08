@@ -2,9 +2,10 @@ import { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import ProgressBar from '../../components/ui/ProgressBar';
-import { api, subscribeJobProgress, ClipCandidate } from '../../services/api';
+import { api, subscribeJobProgress, JobProgress, PollerCallbacks } from '../../services/api';
 import { useProjectStore } from '../../stores/project.store';
 import { useAuthStore } from '../../stores/auth.store';
+import { useJobsStore, newClientRequestId, getOrCreateClientRequestId } from '../../stores/jobs.store';
 
 const STAGES = [
   'Transcribiendo audio...',
@@ -21,8 +22,10 @@ export default function ProcessingScreen() {
   const [progress, setProgress] = useState(0);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [offline, setOffline] = useState(false);
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const startedAtRef = useRef<number | null>(null);
+  const jobIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (isAnonymous || !isAuthenticated) {
@@ -41,16 +44,35 @@ export default function ProcessingScreen() {
       setStage(0);
       setProgress(0);
       setEtaSeconds(null);
+      setOffline(false);
       startedAtRef.current = null;
       try {
-        // 1. Iniciar análisis
-        const { jobId } = await api.analyze(params.projectId!);
+        // 1. Generate or reuse idempotency key BEFORE the POST. The request
+        //    is persisted immediately so a retry of the same user action
+        //    (network drop, double tap, app kill) reuses the same key.
+        const clientRequestId = getOrCreateClientRequestId(
+          params.projectId!,
+          'clip_analysis',
+        );
+        const { jobId } = await api.analyze(params.projectId!, clientRequestId);
+        jobIdRef.current = jobId;
 
-        // 2. Suscribirse al progreso vía SSE
-        unsubscribeRef.current = subscribeJobProgress(
+        // 2. Promote the pending request to a pending job. Consume the
+        //    request so future taps create a new idempotency key.
+        useJobsStore.getState().addJob({
           jobId,
-          (data) => {
-            // Actualizar progreso según el estado
+          projectId: params.projectId!,
+          type: 'clip_analysis',
+          status: 'queued',
+          clientRequestId,
+        });
+        useJobsStore.getState().consumeRequest(clientRequestId);
+
+        // 3. Subscribe to progress. Network errors do NOT abort the poller.
+        const callbacks: PollerCallbacks = {
+          onProgress: (data: JobProgress, status) => {
+            setOffline(status === 'offline');
+            if (status === 'offline') return;
             const nextProgress = Math.max(0, Math.min(100, data.progress));
             setProgress(nextProgress);
             if (nextProgress > 0 && !startedAtRef.current) {
@@ -65,29 +87,32 @@ export default function ProcessingScreen() {
             if (nextProgress >= 66) setStage(2);
             else if (nextProgress >= 33) setStage(1);
           },
-          (result) => {
+          onComplete: (result) => {
             setEtaSeconds(null);
-            // Job completado: guardar clips y navegar
             const data = result as any;
-            const clips = data?.segments || data?.returnvalue?.clips;
+            const clips = data?.segments || data?.returnvalue?.clips || data?.clips;
             if (Array.isArray(clips)) {
               useProjectStore.getState().setClips(clips);
+            } else {
+              useProjectStore.getState().fetchClips(params.projectId!).catch(() => null);
             }
+            useJobsStore.getState().removeJob(jobId);
             router.replace(`/project/${params.projectId}`);
           },
-          (err) => {
-            // Error en SSE
+          onError: (err) => {
+            const message = err.message ?? '';
             if (
-              err.message?.toLowerCase().includes('active provider') ||
-              err.message?.toLowerCase().includes('oauth')
+              message.toLowerCase().includes('active provider') ||
+              message.toLowerCase().includes('oauth')
             ) {
               setError('Conecta un proveedor IA en Configuracion antes de analizar.');
               setTimeout(() => router.replace('/settings' as any), 500);
               return;
             }
-            setError(err.message);
+            setError(message);
           },
-        );
+        };
+        unsubscribeRef.current = subscribeJobProgress(jobId, callbacks);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Error al iniciar análisis');
       }
@@ -115,17 +140,21 @@ export default function ProcessingScreen() {
     <View style={styles.container}>
       <View style={styles.content}>
         <Text style={styles.title}>Procesando video</Text>
-        <Text style={styles.stage}>{STAGES[stage]}</Text>
+        <Text style={styles.stage}>{offline ? 'Sin conexion — reintentando...' : STAGES[stage]}</Text>
 
         <View style={styles.progressContainer}>
           <ProgressBar
-            stage={STAGES[stage]}
+            stage={offline ? 'Esperando conexion' : STAGES[stage]}
             percentage={Math.round(progress)}
             etaSeconds={etaSeconds ?? undefined}
           />
         </View>
 
-        <Text style={styles.hint}>Esto puede tardar unos minutos...</Text>
+        <Text style={styles.hint}>
+          {offline
+            ? 'El servidor sigue procesando. Te avisaremos al terminar.'
+            : 'Esto puede tardar unos minutos...'}
+        </Text>
       </View>
     </View>
   );
@@ -161,6 +190,7 @@ const styles = StyleSheet.create({
   hint: {
     fontSize: 14,
     color: '#999',
+    textAlign: 'center',
   },
   error: {
     fontSize: 16,

@@ -36,6 +36,7 @@ COPY --from=build /app/apps/worker/node_modules ./apps/worker/node_modules
 COPY --from=build /app/libs ./libs
 COPY --from=build /app/dist/libs/shared ./libs/shared/dist
 COPY --from=build /app/node_modules ./node_modules
+RUN mkdir -p /app/dist/apps/worker && ln -s /app/apps/worker/node_modules /app/dist/apps/worker/node_modules
 
 WORKDIR /app/apps/worker
 

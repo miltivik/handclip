@@ -6,6 +6,8 @@ import * as os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { SupabaseService } from '../modules/supabase/supabase.service';
+import { NotificationsService } from '../modules/notifications/notifications.service';
+import { downloadMusicAsset, downloadSourceVideo } from './source-video';
 import { incrementExportCount } from '../providers/export-counter';
 
 const execAsync = promisify(exec);
@@ -13,7 +15,11 @@ const execAsync = promisify(exec);
 interface RenderJobData {
   projectId: string;
   userId: string;
-  videoUrl: string;
+  // Storage path (preferred) — service-role download, no expiry.
+  sourceVideoPath?: string;
+  // Legacy: 1h signed URL. Kept for backward-compat with in-flight jobs
+  // queued before the storage-path refactor.
+  videoUrl?: string;
   trimStart: number;
   trimEnd: number;
   subtitles: SubtitleSegment[];
@@ -25,6 +31,7 @@ interface RenderJobData {
   clipId?: string;
   speed?: 0.5 | 1 | 2;
   textOverlay?: { text: string; position: 'top' | 'center' | 'bottom' } | null;
+  trackingJobId: string;
 }
 
 interface SubtitleSegment {
@@ -63,34 +70,31 @@ export function getDrawtextY(position: string): string {
 
 @Processor('render')
 export class RenderProcessor extends WorkerHost {
-  constructor(private readonly supabaseService: SupabaseService) {
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    private readonly notificationsService: NotificationsService,
+  ) {
     super();
   }
 
   async process(job: Job<RenderJobData>): Promise<{ outputUrl: string }> {
-    const { projectId, userId, videoUrl, trimStart, trimEnd, subtitles, musicUrl, musicVolume, musicFadeIn, musicFadeOut, preset, clipId } = job.data;
+    const { projectId, userId, sourceVideoPath, videoUrl, trimStart, trimEnd, subtitles, musicUrl, musicVolume, musicFadeIn, musicFadeOut, preset, clipId, trackingJobId } = job.data;
     const speed = (job.data.speed && [0.5, 1, 2].includes(job.data.speed)) ? job.data.speed : 1;
     const textOverlay = job.data.textOverlay || null;
     const config = PRESETS[preset] || PRESETS.tiktok;
     const supabase = this.supabaseService.getServiceRoleClient();
 
-    // Create job record in DB
-    const { data: jobRecord, error: jobCreateError } = await supabase
-      .from('jobs')
-      .insert({
-        project_id: projectId,
-        type: 'render',
-        status: 'active',
-        progress: 5,
-        bullmq_id: job.id,
-      })
-      .select('id')
-      .single();
-
-    if (jobCreateError) {
-      console.error(`[Render] Failed to create job record: ${jobCreateError.message}`);
+    // API already created the job row; update it to active and link bullmq id.
+    const dbJobId = trackingJobId;
+    if (dbJobId) {
+      const { error: jobUpdateError } = await supabase
+        .from('jobs')
+        .update({ status: 'active', progress: 5, bullmq_id: job.id })
+        .eq('id', dbJobId);
+      if (jobUpdateError) {
+        console.error(`[Render] Failed to mark job active: ${jobUpdateError.message}`);
+      }
     }
-    const dbJobId = jobRecord?.id;
 
     // Create export record in DB
     const { data: exportRecord, error: exportCreateError } = await supabase
@@ -116,16 +120,23 @@ export class RenderProcessor extends WorkerHost {
     const srtPath = path.join(tempDir, `${projectId}-subs.srt`);
     const thumbPath = path.join(tempDir, `${projectId}-thumb.jpg`);
 
-    // Check export limit for free tier (3/month)
-    const { allowed, count } = await incrementExportCount(userId, supabase);
+    // Check export limit for limited tiers.
+    const { allowed, count, limit } = await incrementExportCount(userId, supabase);
     if (!allowed) {
-      const err = new Error(`Límite de exports alcanzado (${count}/3 este mes). Actualiza a Pro.`);
+      const err = new Error(`Límite de exports alcanzado (${count}/${limit} este mes).`);
       if (dbJobId) {
         await supabase.from('jobs').update({ status: 'failed', result: { error: err.message }, updated_at: new Date().toISOString() }).eq('id', dbJobId);
       }
       if (dbExportId) {
         await supabase.from('exports').update({ status: 'failed' }).eq('id', dbExportId);
       }
+      // Notify user (quota failure happens before the try/catch with push).
+      await this.notificationsService.sendPushNotification(
+        userId,
+        'Límite de exports alcanzado',
+        `Has usado ${count}/${limit} exports este mes.`,
+        { type: 'job_failed', projectId, jobId: dbJobId ?? '' },
+      );
       throw err;
     }
 
@@ -133,13 +144,8 @@ export class RenderProcessor extends WorkerHost {
       if (dbJobId) await supabase.from('jobs').update({ progress: 5 }).eq('id', dbJobId);
       await job.updateProgress(5);
 
-      // Step 1: Download video
-      if (videoUrl.startsWith('http')) {
-        const res = await fetch(videoUrl);
-        fs.writeFileSync(inputPath, Buffer.from(await res.arrayBuffer()));
-      } else {
-        fs.copyFileSync(videoUrl, inputPath);
-      }
+      // Step 1: Download source video (storage path preferred; legacy URL fallback).
+      await downloadSourceVideo(this.supabaseService, sourceVideoPath, videoUrl, inputPath);
 
       if (dbJobId) await supabase.from('jobs').update({ progress: 15 }).eq('id', dbJobId);
       await job.updateProgress(15);
@@ -152,8 +158,7 @@ export class RenderProcessor extends WorkerHost {
 
       // Step 3: Download music if provided
       if (musicUrl && musicPath) {
-        const res = await fetch(musicUrl);
-        fs.writeFileSync(musicPath, Buffer.from(await res.arrayBuffer()));
+        await downloadMusicAsset(this.supabaseService, musicUrl, musicPath);
       }
 
       if (dbJobId) await supabase.from('jobs').update({ progress: 25 }).eq('id', dbJobId);
@@ -313,22 +318,13 @@ export class RenderProcessor extends WorkerHost {
           .eq('id', dbJobId);
       }
 
-      // Send push notification
-      const API_BASE = process.env.API_URL || 'http://localhost:3000';
-      try {
-        await fetch(`${API_BASE}/api/notifications/push`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId,
-            title: '¡Tu clip está listo!',
-            message: `El clip en formato ${preset} se ha exportado correctamente.`,
-            data: { projectId, exportId: dbExportId, type: 'export_complete' },
-          }),
-        });
-      } catch (err: any) {
-        console.warn(`[Render] Push notification failed (non-blocking): ${err.message}`);
-      }
+      // Send push notification (direct service, no HTTP roundtrip)
+      await this.notificationsService.sendPushNotification(
+        userId,
+        '¡Tu clip está listo!',
+        `El clip en formato ${preset} se ha exportado correctamente.`,
+        { type: 'export_complete', projectId, jobId: dbJobId ?? '', exportId: dbExportId ?? '' },
+      );
 
       await job.updateProgress(100);
       console.log(`[Render] Completed for project ${projectId}`);
@@ -357,6 +353,14 @@ export class RenderProcessor extends WorkerHost {
           .update({ status: 'failed' })
           .eq('id', dbExportId);
       }
+
+      // Send failure push so the user knows without polling
+      await this.notificationsService.sendPushNotification(
+        userId,
+        'La exportación falló',
+        'No se pudo exportar el clip. Inténtalo de nuevo.',
+        { type: 'job_failed', projectId, jobId: dbJobId ?? '' },
+      );
 
       throw err;
     } finally {

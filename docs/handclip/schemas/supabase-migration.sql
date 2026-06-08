@@ -14,12 +14,31 @@ create table if not exists public.profiles (
   display_name text,
   avatar_url text,
   plan text not null default 'free' check (plan in ('free', 'pro')),
+  is_admin boolean not null default false,
   exports_this_month integer not null default 0,
   last_export_reset_at timestamptz,
+  polar_customer_id text,
+  polar_subscription_id text,
+  polar_product_id text,
+  subscription_status text,
+  subscription_current_period_end timestamptz,
   expo_push_token text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+alter table public.profiles add column if not exists is_admin boolean not null default false;
+alter table public.profiles add column if not exists polar_customer_id text;
+alter table public.profiles add column if not exists polar_subscription_id text;
+alter table public.profiles add column if not exists polar_product_id text;
+alter table public.profiles add column if not exists subscription_status text;
+alter table public.profiles add column if not exists subscription_current_period_end timestamptz;
+
+-- Marcar admin manualmente (reemplazar email):
+-- update public.profiles p
+-- set is_admin = true, updated_at = now()
+-- from auth.users u
+-- where p.id = u.id and u.email = 'admin@example.com';
+
 -- projects
 create table if not exists public.projects (
   id uuid primary key default uuid_generate_v4(),
@@ -80,7 +99,7 @@ create table if not exists public.exports (
 create table if not exists public.jobs (
   id uuid primary key default uuid_generate_v4(),
   project_id uuid not null references public.projects(id) on delete cascade,
-  type text not null check (type in ('transcription', 'clip_analysis', 'render')),
+  type text not null check (type in ('transcription', 'clip_analysis', 'render', 'edit_prompt')),
   status text not null default 'queued' check (status in ('queued', 'active', 'completed', 'failed')),
   progress integer not null default 0 check (progress >= 0 and progress <= 100),
   result jsonb,
@@ -125,6 +144,10 @@ create policy "Users can view own profile" on public.profiles
 
 create policy "Users can update own profile" on public.profiles
   for update using (auth.uid() = id);
+
+-- Evitar que usuarios cambien admin/billing/quota desde cliente.
+revoke update on public.profiles from authenticated;
+grant update (display_name, avatar_url, expo_push_token, updated_at) on public.profiles to authenticated;
 
 -- projects: dueño CRUD
 create policy "Users can manage own projects" on public.projects
@@ -173,21 +196,133 @@ create policy "Users can read own exports" on storage.objects
 insert into storage.buckets (id, name, public) values ('thumbnails', 'thumbnails', true);
 
 -- ============================================================
--- 7. AI PROVIDER CONNECTIONS (mobile subscription OAuth)
+-- 7. AI PROVIDER CONNECTIONS (mobile OAuth + API-key)
 -- ============================================================
 
 create table if not exists public.ai_provider_connections (
   id uuid primary key default uuid_generate_v4(),
   user_id uuid not null references public.profiles(id) on delete cascade,
-  provider text not null check (provider in ('openai-codex', 'anthropic')),
+  provider text not null check (provider in (
+    'openai-codex',
+    'anthropic',
+    'openai',
+    'openrouter',
+    'deepseek',
+    'google',
+    'mistral',
+    'groq',
+    'xai',
+    'minimax',
+    'zai',
+    'minimax-token-plan',
+    'zai-coding-plan',
+    'custom'
+  )),
+  connection_type text not null default 'oauth' check (connection_type in ('oauth', 'api-key', 'openai-compatible')),
+  model text,
+  base_url text,
   credentials_ciphertext text not null,
   credentials_iv text not null,
   credentials_tag text not null,
   is_active boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (user_id, provider)
+  unique (user_id, provider, connection_type)
 );
 create unique index if not exists idx_ai_provider_connections_one_active
   on public.ai_provider_connections(user_id) where is_active;
 alter table public.ai_provider_connections enable row level security;
+
+-- Update previously deployed tables.
+do $$
+declare
+  has_old_unique boolean;
+begin
+  -- 1. Drop the old (user_id, provider) unique constraint, if present.
+  select exists (
+    select 1 from pg_constraint
+    where conname = 'ai_provider_connections_user_id_provider_key'
+  ) into has_old_unique;
+  if has_old_unique then
+    alter table public.ai_provider_connections
+      drop constraint ai_provider_connections_user_id_provider_key;
+  end if;
+  -- 2. Drop any other unique index on (user_id, provider) so the new one
+  --    can replace it without conflicting.
+  if exists (
+    select 1 from pg_indexes
+    where schemaname = 'public'
+      and tablename = 'ai_provider_connections'
+      and indexname = 'ai_provider_connections_user_id_provider_key'
+  ) then
+    drop index public.ai_provider_connections_user_id_provider_key;
+  end if;
+end $$;
+
+-- Add connection_type / model / base_url columns on already deployed tables
+-- before recreating constraints that reference them.
+alter table public.ai_provider_connections
+  add column if not exists connection_type text not null default 'oauth';
+alter table public.ai_provider_connections
+  add column if not exists model text;
+alter table public.ai_provider_connections
+  add column if not exists base_url text;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'ai_provider_connections_connection_type_check'
+  ) then
+    alter table public.ai_provider_connections
+      add constraint ai_provider_connections_connection_type_check
+      check (connection_type in ('oauth', 'api-key', 'openai-compatible'));
+  end if;
+end $$;
+
+-- Recreate the (user_id, provider, connection_type) unique constraint on
+-- every install so existing deployments pick it up.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'ai_provider_connections_user_id_provider_connection_type_key'
+  ) then
+    alter table public.ai_provider_connections
+      add constraint ai_provider_connections_user_id_provider_connection_type_key
+      unique (user_id, provider, connection_type);
+  end if;
+end $$;
+
+-- Make sure the provider check constraint is up to date.
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint
+    where conname = 'ai_provider_connections_provider_check'
+  ) then
+    alter table public.ai_provider_connections
+      drop constraint ai_provider_connections_provider_check;
+  end if;
+  begin
+    alter table public.ai_provider_connections
+      add constraint ai_provider_connections_provider_check
+      check (provider in (
+        'openai-codex',
+        'anthropic',
+        'openai',
+        'openrouter',
+        'deepseek',
+        'google',
+        'mistral',
+        'groq',
+        'xai',
+        'minimax',
+        'zai',
+        'minimax-token-plan',
+        'zai-coding-plan',
+        'custom'
+      ));
+    exception when duplicate_object then null;
+  end;
+end $$;

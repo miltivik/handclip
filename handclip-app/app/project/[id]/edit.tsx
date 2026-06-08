@@ -7,8 +7,10 @@ import Preview from '../../../components/editor/Preview';
 import Timeline from '../../../components/editor/Timeline';
 import SubtitleOverlay from '../../../components/editor/SubtitleOverlay';
 import SubtitleEditor from '../../../components/editor/SubtitleEditor';
+import EditPromptModal from '../../../components/editor/EditPromptModal';
 import { useEditorStore } from '../../../stores/editor.store';
 import { useProjectStore } from '../../../stores/project.store';
+import { useJobsStore, getOrCreateClientRequestId } from '../../../stores/jobs.store';
 import { useAppVideoPlayer } from '../../../hooks/useVideoPlayer';
 import { useAuthStore } from '../../../stores/auth.store';
 import { showAccountRequired } from '../../../lib/account-required';
@@ -38,9 +40,15 @@ export default function EditScreen() {
     setTextOverlay,
   } = useEditorStore();
   const [editingSubtitle, setEditingSubtitle] = useState<EditingSubtitle | null>(null);
+  const [editPromptOpen, setEditPromptOpen] = useState(false);
   const [musicUrl, setMusicUrl] = useState<string | null>(null);
+  const [musicUploading, setMusicUploading] = useState(false);
   const [musicVolume, setMusicVolume] = useState(0.3);
-  const [quota, setQuota] = useState<{ exportsThisMonth: number; maxExports: number } | null>(null);
+  const [quota, setQuota] = useState<{
+    exportsThisMonth: number;
+    maxExports: number | null;
+    isUnlimited: boolean;
+  } | null>(null);
   const {
     currentProject,
     clips,
@@ -85,12 +93,21 @@ export default function EditScreen() {
 
   const handleExport = async () => {
     if (!id || !clipId) return;
+    if (musicUploading) {
+      Alert.alert('Audio en progreso', 'Espera a que termine de subirse el audio.');
+      return;
+    }
     const isAnonymous = useAuthStore.getState().isAnonymous;
     if (isAnonymous) {
       showAccountRequired();
       return;
     }
     try {
+      const clientRequestId = getOrCreateClientRequestId(
+        id,
+        'render',
+        { preset, clipId },
+      );
       const result = await api.createExportJob(id, {
         clipId,
         trimStart,
@@ -101,12 +118,61 @@ export default function EditScreen() {
         musicVolume,
         speed,
         textOverlay: textOverlay?.text.trim() ? textOverlay : null,
+        clientRequestId,
       });
       if (result.jobId) {
+        useJobsStore.getState().addJob({
+          jobId: result.jobId,
+          projectId: id,
+          type: 'render',
+          status: 'queued',
+          clientRequestId,
+          meta: { preset, clipId },
+        });
+        useJobsStore.getState().consumeRequest(clientRequestId);
         router.push(`/project/${id}/export?jobId=${result.jobId}&preset=${preset}`);
       }
     } catch (err) {
       Alert.alert('Error', err instanceof Error ? err.message : 'No se pudo iniciar la exportación');
+    }
+  };
+
+  const handleEditPrompt = () => {
+    if (!id) return;
+    const isAnonymous = useAuthStore.getState().isAnonymous;
+    if (isAnonymous) {
+      showAccountRequired();
+      return;
+    }
+    setEditPromptOpen(true);
+  };
+
+  const submitEditPrompt = async (input: string) => {
+    if (!id) return;
+    setEditPromptOpen(false);
+    try {
+      const clientRequestId = getOrCreateClientRequestId(id, 'edit_prompt');
+      const { jobId } = await api.submitEditPrompt(id, { prompt: input.trim(), clientRequestId });
+      useJobsStore.getState().consumeRequest(clientRequestId);
+      // The server may immediately reject the request as "not
+      // implemented" by marking the job failed in the DB. Pull the
+      // current status before showing a misleading success message.
+      const latest = await api.getJob(jobId);
+      if (latest.status === 'FAILED') {
+        const reason = latest.failedReason ?? 'La edición por prompt aún no está disponible.';
+        Alert.alert('Función no disponible', reason);
+        return;
+      }
+      useJobsStore.getState().addJob({
+        jobId,
+        projectId: id,
+        type: 'edit_prompt',
+        status: 'queued',
+        clientRequestId,
+      });
+      Alert.alert('Edición enviada', 'Te avisaremos cuando termine de aplicarse.');
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'No se pudo enviar la edición');
     }
   };
   const handleSubtitleTap = (index: number, text: string, startTime: number, endTime: number) => {
@@ -129,10 +195,20 @@ export default function EditScreen() {
         type: 'audio/*',
       });
       if (result.canceled === false && result.assets && result.assets[0]) {
-        setMusicUrl(result.assets[0].uri);
+        const asset = result.assets[0];
+        setMusicUploading(true);
+        const { storagePath } = await api.uploadAudio({
+          uri: asset.uri,
+          fileName: asset.name ?? 'audio.mp3',
+          mimeType: asset.mimeType ?? 'audio/mpeg',
+          fileSize: asset.size,
+        });
+        setMusicUrl(storagePath);
       }
     } catch (err) {
-      Alert.alert('Error', 'No se pudo seleccionar el archivo de audio');
+      Alert.alert('Error', err instanceof Error ? err.message : 'No se pudo subir el archivo de audio');
+    } finally {
+      setMusicUploading(false);
     }
   };
   const handleRemoveMusic = () => {
@@ -178,17 +254,25 @@ export default function EditScreen() {
           onCancel={handleSubtitleCancel}
         />
       )}
+      <EditPromptModal
+        visible={editPromptOpen}
+        onCancel={() => setEditPromptOpen(false)}
+        onSubmit={submitEditPrompt}
+      />
       {/* Music import */}
       <View style={styles.musicSection}>
         <Text style={styles.musicLabel}>🎵 Música</Text>
         {!musicUrl ? (
           <TouchableOpacity 
-            style={styles.musicSelectButton} 
+            style={[styles.musicSelectButton, musicUploading && styles.musicSelectButtonDisabled]}
             onPress={handleSelectMusic}
+            disabled={musicUploading}
             accessibilityLabel="Seleccionar archivo de audio"
             accessibilityRole="button"
           >
-            <Text style={styles.musicSelectButtonText}>Seleccionar audio</Text>
+            <Text style={styles.musicSelectButtonText}>
+              {musicUploading ? 'Subiendo audio...' : 'Seleccionar audio'}
+            </Text>
           </TouchableOpacity>
         ) : (
           <View style={styles.musicControls}>
@@ -318,13 +402,18 @@ export default function EditScreen() {
             <Text
               style={[
                 styles.quotaText,
-                quota.exportsThisMonth >= quota.maxExports && styles.quotaTextDanger,
+                !quota.isUnlimited &&
+                  quota.maxExports !== null &&
+                  quota.exportsThisMonth >= quota.maxExports &&
+                  styles.quotaTextDanger,
               ]}
             >
-              {quota.maxExports - quota.exportsThisMonth} / {quota.maxExports} exports restantes
+              {quota.isUnlimited || quota.maxExports === null
+                ? 'Exports ilimitados'
+                : `${quota.maxExports - quota.exportsThisMonth} / ${quota.maxExports} exports restantes`}
             </Text>
-            {quota.exportsThisMonth >= quota.maxExports && (
-              <Text style={styles.quotaWarningText}>Limite de exportaciones alcanzado</Text>
+            {!quota.isUnlimited && quota.maxExports !== null && quota.exportsThisMonth >= quota.maxExports && (
+              <Text style={styles.quotaWarningText}>Límite de exportaciones alcanzado</Text>
             )}
           </View>
         ) : null}
@@ -332,15 +421,30 @@ export default function EditScreen() {
           style={[
             styles.exportButton,
             quota?.exportsThisMonth !== undefined &&
+              !quota.isUnlimited &&
+              quota.maxExports !== null &&
               quota.exportsThisMonth >= quota.maxExports &&
               styles.exportButtonDisabled,
           ]}
           onPress={handleExport}
-          disabled={quota?.exportsThisMonth !== undefined && quota.exportsThisMonth >= quota.maxExports}
+          disabled={
+            quota?.exportsThisMonth !== undefined &&
+            !quota.isUnlimited &&
+            quota.maxExports !== null &&
+            quota.exportsThisMonth >= quota.maxExports
+          }
           accessibilityLabel="Exportar clip"
           accessibilityRole="button"
         >
           <Text style={styles.exportButtonText}>Exportar</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.promptButton}
+          onPress={handleEditPrompt}
+          accessibilityLabel="Editar por prompt"
+          accessibilityRole="button"
+        >
+          <Text style={styles.promptButtonText}>Editar por prompt</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -379,6 +483,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderRadius: 8,
     alignSelf: 'flex-start',
+  },
+  musicSelectButtonDisabled: {
+    opacity: 0.6,
   },
   musicSelectButtonText: {
     color: '#fff',
@@ -544,5 +651,17 @@ const styles = StyleSheet.create({
   },
   exportButtonDisabled: {
     opacity: 0.5,
+  },
+  promptButton: {
+    backgroundColor: '#1f2937',
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginTop: 12,
+  },
+  promptButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });

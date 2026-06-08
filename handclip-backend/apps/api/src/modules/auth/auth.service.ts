@@ -1,11 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
-import { MAX_FREE_EXPORTS_PER_MONTH } from '@handclip/shared/constants/limits';
+import {
+  getMonthlyExportLimit,
+  MAX_FREE_EXPORTS_PER_MONTH,
+  MonthlyExportLimit,
+} from '@handclip/shared/constants/limits';
 
 export interface QuotaInfo {
   exportsThisMonth: number;
-  maxExports: number;
+  maxExports: MonthlyExportLimit;
   plan: string;
+  isUnlimited: boolean;
 }
 
 @Injectable()
@@ -58,23 +63,30 @@ export class AuthService {
     const supabase = this.supabaseService.getServiceRoleClient();
     const { data: profile, error } = await supabase
       .from('profiles')
-      .select('exports_this_month, plan, last_export_reset_at')
+      .select('exports_this_month, plan, is_admin, last_export_reset_at')
       .eq('id', userId)
       .single();
 
     if (error || !profile) {
-      return { exportsThisMonth: 0, maxExports: MAX_FREE_EXPORTS_PER_MONTH, plan: 'free' };
+      return {
+        exportsThisMonth: 0,
+        maxExports: MAX_FREE_EXPORTS_PER_MONTH,
+        plan: 'free',
+        isUnlimited: false,
+      };
     }
 
     const now = new Date();
     const lastReset = profile.last_export_reset_at ? new Date(profile.last_export_reset_at) : null;
     const needsReset = !lastReset || lastReset.getMonth() !== now.getMonth() || lastReset.getFullYear() !== now.getFullYear();
     const exportsThisMonth = needsReset ? 0 : (profile.exports_this_month || 0);
+    const limit = getMonthlyExportLimit(profile.plan, Boolean(profile.is_admin));
 
     return {
       exportsThisMonth,
-      maxExports: MAX_FREE_EXPORTS_PER_MONTH,
-      plan: profile.plan || 'free',
+      maxExports: limit,
+      plan: profile.is_admin ? 'admin' : profile.plan || 'free',
+      isUnlimited: limit === null,
     };
   }
 }

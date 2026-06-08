@@ -9,10 +9,18 @@ export interface PiProviderTask {
 }
 
 export interface PiProviderCall {
-  provider: 'openai-codex' | 'anthropic';
+  /**
+   * The pi-ai provider id (e.g. `openai`, `anthropic`, `openai-codex`, `deepseek`,
+   * `openrouter`, `google`, `mistral`, `groq`, `xai`, `zai`, `minimax`).
+   * For custom openai-compatible endpoints use `provider: 'openai-completions'`
+   * together with `baseURL` and `model` and the adapter will build the request
+   * through pi-ai's openai-completions streaming path.
+   */
+  provider: string;
   resultProvider: string;
   model: string;
   apiKey: string;
+  baseURL?: string;
   task: PiProviderTask;
 }
 
@@ -25,12 +33,43 @@ export interface PiProviderResult {
 
 export type PiAiLoader = () => Promise<PiAiModule>;
 
+const KNOWN_PIAI_PROVIDERS = new Set<string>([
+  'openai',
+  'anthropic',
+  'openai-codex',
+  'azure-openai-responses',
+  'google',
+  'google-vertex',
+  'deepseek',
+  'openrouter',
+  'mistral',
+  'groq',
+  'xai',
+  'zai',
+  'minimax',
+  'minimax-cn',
+  'minimax-token-plan',
+  'zai-coding-plan',
+  'moonshotai',
+  'huggingface',
+  'fireworks',
+  'together',
+  'opencode',
+  'opencode-go',
+  'kimi-coding',
+  'cloudflare-workers-ai',
+  'cloudflare-ai-gateway',
+  'xiaomi',
+  'amazon-bedrock',
+]);
+
 export class PiProviderAdapter {
   constructor(private readonly load: PiAiLoader = loadPiAi) {}
 
   async call(request: PiProviderCall): Promise<PiProviderResult> {
     const piAi = await this.load();
-    const model = piAi.getModel(request.provider, request.model);
+    const providerId = this.resolveProviderId(request.provider, request.baseURL);
+    const model = this.resolveModel(piAi, providerId, request.model, request.baseURL);
     const response = await piAi.complete(
       model,
       {
@@ -61,6 +100,43 @@ export class PiProviderAdapter {
         inputTokens: response.usage.input,
         outputTokens: response.usage.output,
       },
+    };
+  }
+
+  private resolveProviderId(provider: string, baseURL?: string): string {
+    if (provider === 'custom' || baseURL) {
+      return 'openai-completions';
+    }
+    if (KNOWN_PIAI_PROVIDERS.has(provider)) {
+      return provider;
+    }
+    return provider;
+  }
+
+  private resolveModel(
+    piAi: PiAiModule,
+    providerId: string,
+    modelId: string,
+    baseURL?: string,
+  ): unknown {
+    if (providerId === 'openai-completions' || baseURL) {
+      return this.buildOpenAiCompatibleModel(modelId, baseURL);
+    }
+    return piAi.getModel(providerId, modelId);
+  }
+
+  private buildOpenAiCompatibleModel(modelId: string, baseURL?: string): unknown {
+    return {
+      id: modelId,
+      name: modelId,
+      api: 'openai-completions',
+      provider: 'custom',
+      baseUrl: baseURL ?? 'http://localhost:11434/v1',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 32000,
     };
   }
 }

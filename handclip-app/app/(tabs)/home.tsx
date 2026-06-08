@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { api, Project } from '../../services/api';
 import { useAuthStore } from '../../stores/auth.store';
+import { useJobsStore, PendingJob } from '../../stores/jobs.store';
 import EmptyState from '../../components/ui/EmptyState';
 import { useAppTheme } from '../../lib/theme';
 
@@ -45,6 +46,13 @@ export default function HomeTab() {
   const { theme } = useAppTheme();
   const isAnonymous = useAuthStore((state) => state.isAnonymous);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const jobs = useJobsStore((state) => state.jobs);
+  const pendingJobs = useMemo(
+    () => jobs.filter(
+      (j) => j.status === 'queued' || j.status === 'active' || j.status === 'offline',
+    ),
+    [jobs],
+  );
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(isAuthenticated && !isAnonymous);
   const [error, setError] = useState<string | null>(null);
@@ -175,6 +183,7 @@ export default function HomeTab() {
       <FlatList
         data={projects}
         keyExtractor={(item) => item.id}
+        ListHeaderComponent={pendingJobs.length > 0 ? <PendingJobsBanner jobs={pendingJobs} /> : null}
         renderItem={({ item }) => (
           <ProjectCard
             project={item}
@@ -184,6 +193,50 @@ export default function HomeTab() {
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
       />
+    </View>
+  );
+}
+
+const JOB_LABELS: Record<PendingJob['type'], string> = {
+  clip_analysis: 'Analizando',
+  render: 'Renderizando',
+  edit_prompt: 'Editando',
+};
+
+function PendingJobsBanner({ jobs }: { jobs: PendingJob[] }) {
+  const router = useRouter();
+  const { theme } = useAppTheme();
+  return (
+    <View style={[styles.banner, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      {jobs.slice(0, 3).map((job) => (
+        <TouchableOpacity
+          key={job.jobId}
+          style={styles.bannerRow}
+          onPress={() => {
+            if (job.type === 'render') {
+              const preset = job.meta?.preset;
+              router.push(
+                preset
+                  ? `/project/${job.projectId}/export?jobId=${job.jobId}&preset=${preset}`
+                  : `/project/${job.projectId}/export?jobId=${job.jobId}`,
+              );
+            } else {
+              router.push(`/project/${job.projectId}`);
+            }
+          }}
+          accessibilityRole="button"
+        >
+          <ActivityIndicator size="small" color={theme.primary} />
+          <Text style={[styles.bannerText, { color: theme.text }]}>
+            {JOB_LABELS[job.type]}... {job.status === 'offline' ? '(sin conexion)' : `${Math.round(job.progress)}%`}
+          </Text>
+        </TouchableOpacity>
+      ))}
+      {jobs.length > 3 ? (
+        <Text style={[styles.bannerMore, { color: theme.muted }]}>
+          +{jobs.length - 3} más
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -239,5 +292,24 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 14,
+  },
+  banner: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  bannerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  bannerText: {
+    marginLeft: 8,
+    fontSize: 14,
+  },
+  bannerMore: {
+    fontSize: 12,
+    marginTop: 4,
   },
 });

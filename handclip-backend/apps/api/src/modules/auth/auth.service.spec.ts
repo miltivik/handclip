@@ -126,6 +126,7 @@ describe('AuthService.getQuota', () => {
         data: {
           exports_this_month: 1,
           plan: 'pro',
+          is_admin: false,
           last_export_reset_at: new Date().toISOString(),
         },
         error: null,
@@ -135,6 +136,32 @@ describe('AuthService.getQuota', () => {
 
     await expect(service.getQuota('user-123')).resolves.toMatchObject({
       plan: 'pro',
+      maxExports: null,
+      isUnlimited: true,
+    });
+  });
+
+  it('returns unlimited quota for admins', async () => {
+    const chain: MockChain = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({
+        data: {
+          exports_this_month: 9,
+          plan: 'free',
+          is_admin: true,
+          last_export_reset_at: new Date().toISOString(),
+        },
+        error: null,
+      }),
+    };
+    supabase.queueChain(chain);
+
+    await expect(service.getQuota('admin-user')).resolves.toMatchObject({
+      exportsThisMonth: 9,
+      maxExports: null,
+      plan: 'admin',
+      isUnlimited: true,
     });
   });
 });

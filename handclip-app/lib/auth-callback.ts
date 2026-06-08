@@ -59,6 +59,11 @@ export async function completeAuthCallback(url: string) {
     return data.session;
   }
 
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (session) return session;
+
   throw new Error('Auth callback missing session tokens.');
 }
 

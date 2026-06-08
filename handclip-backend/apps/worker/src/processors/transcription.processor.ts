@@ -2,6 +2,8 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job, Queue } from 'bullmq';
 import { SubtitleSegment, SubtitleSegmentSchema } from '@handclip/shared';
 import { SupabaseService } from '../modules/supabase/supabase.service';
+import { NotificationsService } from '../modules/notifications/notifications.service';
+import { downloadSourceVideo } from './source-video';
 import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -20,7 +22,11 @@ interface WhisperWord {
 interface TranscriptionJobData {
   projectId: string;
   userId: string;
-  videoUrl: string;
+  // Storage path (preferred) — service-role download, no expiry.
+  sourceVideoPath?: string;
+  // Legacy: 1h signed URL. Kept for backward-compat with in-flight jobs
+  // queued before the storage-path refactor.
+  videoUrl?: string;
   trackingJobId?: string;
 }
 
@@ -28,7 +34,10 @@ interface TranscriptionJobData {
 export class TranscriptionProcessor extends WorkerHost {
   private openai: OpenAI;
 
-  constructor(private readonly supabaseService: SupabaseService) {
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    private readonly notificationsService: NotificationsService,
+  ) {
     super();
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
@@ -36,34 +45,41 @@ export class TranscriptionProcessor extends WorkerHost {
   }
 
   async process(job: Job<TranscriptionJobData>): Promise<{ segments: SubtitleSegment[] }> {
-    const { projectId, videoUrl, trackingJobId } = job.data;
+    const { projectId, userId, sourceVideoPath, videoUrl, trackingJobId } = job.data;
     const supabase = this.supabaseService.getServiceRoleClient();
     const dbProgress = (progress: number) =>
       trackingJobId ? Math.round(progress * 0.6) : progress;
 
-    const { data: jobRecord, error: jobCreateError } = trackingJobId
-      ? await supabase
-          .from('jobs')
-          .update({ status: 'active', progress: dbProgress(5) })
-          .eq('id', trackingJobId)
-          .select('id')
-          .single()
-      : await supabase
-          .from('jobs')
-          .insert({
-            project_id: projectId,
-            type: 'transcription',
-            status: 'active',
-            progress: 5,
-            bullmq_id: job.id,
-          })
-          .select('id')
-          .single();
-
-    if (jobCreateError) {
-      console.error(`[Transcription] Failed to create job record: ${jobCreateError.message}`);
+    let dbJobId: string | undefined;
+    if (trackingJobId) {
+      const { data: jobRecord, error } = await supabase
+        .from('jobs')
+        .update({ status: 'active', progress: dbProgress(5) })
+        .eq('id', trackingJobId)
+        .select('id')
+        .single();
+      if (error) {
+        console.error(`[Transcription] Failed to update job: ${error.message}`);
+      }
+      dbJobId = jobRecord?.id;
+    } else {
+      const { data: jobRecord, error } = await supabase
+        .from('jobs')
+        .insert({
+          project_id: projectId,
+          user_id: userId,
+          type: 'transcription',
+          status: 'active',
+          progress: 5,
+          bullmq_id: job.id,
+        })
+        .select('id')
+        .single();
+      if (error) {
+        console.error(`[Transcription] Failed to create job record: ${error.message}`);
+      }
+      dbJobId = jobRecord?.id;
     }
-    const dbJobId = jobRecord?.id;
 
     await job.updateProgress(5);
     console.log(`[Transcription] Starting for project ${projectId}`);
@@ -79,14 +95,8 @@ export class TranscriptionProcessor extends WorkerHost {
     const audioPath = path.join(tempDir, `${projectId}-audio.mp3`);
 
     try {
-      // Step 1: Download video to temp file
-      if (videoUrl.startsWith('http')) {
-        const response = await fetch(videoUrl);
-        const buffer = Buffer.from(await response.arrayBuffer());
-        fs.writeFileSync(videoPath, buffer);
-      } else {
-        fs.copyFileSync(videoUrl, videoPath);
-      }
+      // Step 1: Download source video (storage path preferred; legacy URL fallback).
+      await downloadSourceVideo(this.supabaseService, sourceVideoPath, videoUrl, videoPath);
 
       // Step 2: Extract audio with FFmpeg
       if (dbJobId) {
@@ -220,6 +230,20 @@ export class TranscriptionProcessor extends WorkerHost {
         .from('projects')
         .update({ status: 'failed' })
         .eq('id', projectId);
+
+      // Notify user. The analysis path (transcription has trackingJobId)
+      // also needs a push because if transcription fails, clip-analysis
+      // never runs and the user would otherwise never hear about the
+      // failure. Success for the analysis path is still announced by
+      // clip-analysis.processor.
+      await this.notificationsService.sendPushNotification(
+        userId,
+        'El análisis falló',
+        trackingJobId
+          ? 'No se pudo transcribir el video. Inténtalo de nuevo.'
+          : 'No se pudo transcribir el video. Inténtalo de nuevo.',
+        { type: 'job_failed', projectId, jobId: dbJobId ?? '' },
+      );
 
       throw err;
     } finally {

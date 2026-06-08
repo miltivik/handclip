@@ -168,6 +168,7 @@ describe('ProviderManager subscription selection', () => {
   it('uses the user-specific active OAuth provider when requested', async () => {
     const databaseStore = {
       getActiveApiKey: vi.fn(async () => ({
+        type: 'oauth' as const,
         apiKey: 'user-token',
         provider: 'openai-codex' as const,
         resultProvider: 'openai-codex' as const,
@@ -176,7 +177,7 @@ describe('ProviderManager subscription selection', () => {
     const piAdapter = { call: vi.fn(async () => result('openai-codex')) };
     const manager = new ProviderManager({
       env: { HANDCLIP_LLM_PROVIDER: 'api-key' },
-      databaseOAuthCredentialsStore: databaseStore,
+      databaseConnectionStore: databaseStore,
       piAdapter,
       openAiCaller: vi.fn(),
     });
@@ -194,19 +195,82 @@ describe('ProviderManager subscription selection', () => {
     });
   });
 
+  it('routes the user-specific API-key connection through pi-ai with model and base URL', async () => {
+    const databaseStore: { getActiveApiKey: ReturnType<typeof vi.fn> } = {
+      getActiveApiKey: vi.fn(async () => ({
+        type: 'api-key' as const,
+        apiKey: 'sk-user',
+        provider: 'openrouter' as const,
+        model: 'anthropic/claude-3.5-sonnet',
+        baseUrl: null,
+        resultProvider: 'openrouter',
+      })),
+    };
+    const piAdapter = { call: vi.fn(async () => result('openrouter')) };
+    const manager = new ProviderManager({
+      env: { HANDCLIP_LLM_PROVIDER: 'api-key' },
+      databaseConnectionStore: databaseStore,
+      piAdapter,
+      openAiCaller: vi.fn(),
+    });
+
+    await expect(manager.callWithUserProvider(task, 'user-1')).resolves.toEqual(
+      result('openrouter'),
+    );
+    expect(piAdapter.call).toHaveBeenCalledWith({
+      provider: 'openrouter',
+      resultProvider: 'openrouter',
+      model: 'anthropic/claude-3.5-sonnet',
+      apiKey: 'sk-user',
+      task,
+    });
+  });
+
+  it('forwards base URL to pi-ai for custom openai-compatible endpoints', async () => {
+    const databaseStore: { getActiveApiKey: ReturnType<typeof vi.fn> } = {
+      getActiveApiKey: vi.fn(async () => ({
+        type: 'api-key' as const,
+        apiKey: 'sk-local',
+        provider: 'custom' as const,
+        model: 'llama-3.1-8b',
+        baseUrl: 'http://192.168.0.10:11434/v1',
+        resultProvider: 'custom',
+      })),
+    };
+    const piAdapter = { call: vi.fn(async () => result('custom')) };
+    const manager = new ProviderManager({
+      env: { HANDCLIP_LLM_PROVIDER: 'api-key' },
+      databaseConnectionStore: databaseStore,
+      piAdapter,
+      openAiCaller: vi.fn(),
+    });
+
+    await expect(manager.callWithUserProvider(task, 'user-1')).resolves.toEqual(
+      result('custom'),
+    );
+    expect(piAdapter.call).toHaveBeenCalledWith({
+      provider: 'custom',
+      resultProvider: 'custom',
+      model: 'llama-3.1-8b',
+      apiKey: 'sk-local',
+      baseURL: 'http://192.168.0.10:11434/v1',
+      task,
+    });
+  });
+
   it('throws when no active OAuth connection exists for the user', async () => {
     const databaseStore = {
       getActiveApiKey: vi.fn(async () => null),
     };
     const manager = new ProviderManager({
       env: {},
-      databaseOAuthCredentialsStore: databaseStore,
+      databaseConnectionStore: databaseStore,
       piAdapter: { call: vi.fn() },
       openAiCaller: vi.fn(),
     });
 
     await expect(manager.callWithUserProvider(task, 'user-1')).rejects.toThrow(
-      'No active OAuth connection found for user',
+      'No active AI connection found for user',
     );
   });
 });

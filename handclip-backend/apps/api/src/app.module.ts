@@ -13,6 +13,7 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 import { HealthModule } from './modules/health/health.module';
 import { ExportsModule } from './modules/exports/exports.module';
 import { AiConnectionsModule } from './modules/ai-connections/ai-connections.module';
+import { BillingModule } from './modules/billing/billing.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { AiConnectionsModule } from './modules/ai-connections/ai-connections.mod
     SupabaseModule,
     AuthModule,
     AiConnectionsModule,
+    BillingModule,
     ProjectsModule,
     ClipsModule,
     UploadsModule,

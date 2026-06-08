@@ -1,0 +1,350 @@
+import { ProviderCatalogEntry } from './types';
+
+export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
+  // ───────────────────────────────────────────────
+  // Suscripciones (OAuth)
+  // ───────────────────────────────────────────────
+  {
+    id: 'openai-codex',
+    displayName: 'ChatGPT Plus/Pro (Codex)',
+    group: 'subscription',
+    connectionType: 'oauth',
+    description: 'Conecta tu cuenta ChatGPT Plus o Pro para usar Codex.',
+    modelRequired: false,
+    baseUrlRequired: false,
+    apiKeyRequired: false,
+    fields: [],
+    supportedByPiAi: true,
+    planType: 'oauth',
+    apiKeyUrl: 'https://chatgpt.com/#settings/plus',
+    docsUrl: 'https://platform.openai.com/docs',
+  },
+  {
+    id: 'anthropic',
+    displayName: 'Anthropic Claude Pro/Max',
+    group: 'subscription',
+    connectionType: 'oauth',
+    description: 'Conecta tu suscripción Claude Pro o Max.',
+    warning:
+      'El uso desde integraciones de terceros puede consumir extra usage facturado.',
+    modelRequired: false,
+    baseUrlRequired: false,
+    apiKeyRequired: false,
+    fields: [],
+    supportedByPiAi: true,
+    planType: 'oauth',
+    apiKeyUrl: 'https://claude.ai/settings',
+    docsUrl: 'https://docs.anthropic.com',
+  },
+
+  // ───────────────────────────────────────────────
+  // Planes con key
+  // ───────────────────────────────────────────────
+  {
+    id: 'minimax-token-plan',
+    displayName: 'MiniMax Token Plan',
+    group: 'key-plan',
+    connectionType: 'api-key',
+    description:
+      'Plan Token de MiniMax: acceso unificado a modelos de texto, video, imagen y audio bajo una sola Subscription Key.',
+    planLabel: 'Token Plan',
+    planType: 'token-plan',
+    defaultModel: 'MiniMax-M3',
+    modelRequired: true,
+    baseUrlRequired: false,
+    apiKeyRequired: true,
+    fields: [],
+    supportedByPiAi: true,
+    modelListStrategy: 'static',
+    staticModels: [
+      { id: 'MiniMax-M3', label: 'MiniMax-M3', recommended: true },
+      { id: 'MiniMax-Text-01', label: 'MiniMax-Text-01' },
+    ],
+    apiKeyUrl: 'https://platform.minimax.io/user-center/payment/token-plan',
+    docsUrl: 'https://platform.minimax.io/docs',
+    modelsUrl: 'https://platform.minimax.io/docs',
+  },
+  {
+    id: 'zai-coding-plan',
+    displayName: 'ZAI GLM Coding Plan',
+    group: 'key-plan',
+    connectionType: 'openai-compatible',
+    description:
+      'Plan Coding de ZAI/GLM optimizado para programación. Endpoint y API key dedicados.',
+    planLabel: 'Coding Plan',
+    planType: 'coding-plan',
+    defaultBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
+    defaultModel: 'glm-4.5',
+    modelRequired: true,
+    baseUrlRequired: false,
+    apiKeyRequired: true,
+    fields: [],
+    supportedByPiAi: false,
+    modelListStrategy: 'static',
+    staticModels: [
+      { id: 'glm-4.5', label: 'GLM-4.5', recommended: true },
+      { id: 'glm-4', label: 'GLM-4' },
+    ],
+    apiKeyUrl: 'https://z.ai/model-api',
+    docsUrl: 'https://z.ai/model-api',
+  },
+
+  // ───────────────────────────────────────────────
+  // API key
+  // ───────────────────────────────────────────────
+  {
+    id: 'openai',
+    displayName: 'OpenAI',
+    group: 'api-key',
+    connectionType: 'api-key',
+    description: 'API key oficial de OpenAI para GPT-4o, GPT-5, etc.',
+    defaultModel: 'gpt-4o-mini',
+    modelRequired: true,
+    baseUrlRequired: false,
+    apiKeyRequired: true,
+    fields: [],
+    supportedByPiAi: true,
+    planType: 'standard',
+    modelListStrategy: 'api',
+    apiKeyUrl: 'https://platform.openai.com/api-keys',
+    docsUrl: 'https://platform.openai.com/docs',
+    modelsUrl: 'https://platform.openai.com/docs/models',
+  },
+  {
+    id: 'anthropic',
+    displayName: 'Anthropic (API key)',
+    group: 'api-key',
+    connectionType: 'api-key',
+    description: 'API key oficial de Anthropic para Claude.',
+    defaultModel: 'claude-sonnet-4-6',
+    modelRequired: true,
+    baseUrlRequired: false,
+    apiKeyRequired: true,
+    fields: [],
+    supportedByPiAi: true,
+    planType: 'standard',
+    modelListStrategy: 'static',
+    staticModels: [
+      { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', recommended: true },
+      { id: 'claude-opus-4-1', label: 'Claude Opus 4.1' },
+      { id: 'claude-haiku-3-5', label: 'Claude Haiku 3.5' },
+    ],
+    apiKeyUrl: 'https://console.anthropic.com/settings/keys',
+    docsUrl: 'https://docs.anthropic.com',
+    modelsUrl: 'https://docs.anthropic.com/en/docs/about-claude/models',
+  },
+  {
+    id: 'openrouter',
+    displayName: 'OpenRouter',
+    group: 'api-key',
+    connectionType: 'api-key',
+    description: 'Acceso a múltiples modelos con una sola API key.',
+    defaultModel: 'openai/gpt-4o-mini',
+    modelRequired: true,
+    baseUrlRequired: false,
+    apiKeyRequired: true,
+    fields: [],
+    supportedByPiAi: true,
+    planType: 'standard',
+    modelListStrategy: 'api',
+    apiKeyUrl: 'https://openrouter.ai/keys',
+    docsUrl: 'https://openrouter.ai/docs',
+    modelsUrl: 'https://openrouter.ai/models',
+  },
+  {
+    id: 'deepseek',
+    displayName: 'DeepSeek',
+    group: 'api-key',
+    connectionType: 'api-key',
+    description: 'Modelos DeepSeek (deepseek-chat, deepseek-reasoner).',
+    defaultModel: 'deepseek-chat',
+    modelRequired: true,
+    baseUrlRequired: false,
+    apiKeyRequired: true,
+    fields: [],
+    supportedByPiAi: true,
+    planType: 'standard',
+    modelListStrategy: 'api',
+    apiKeyUrl: 'https://platform.deepseek.com/api_keys',
+    docsUrl: 'https://platform.deepseek.com/api-docs',
+    modelsUrl: 'https://platform.deepseek.com/api-docs',
+  },
+  {
+    id: 'google',
+    displayName: 'Google Gemini',
+    group: 'api-key',
+    connectionType: 'api-key',
+    description: 'API key de Google AI Studio para Gemini.',
+    defaultModel: 'gemini-2.5-flash',
+    modelRequired: true,
+    baseUrlRequired: false,
+    apiKeyRequired: true,
+    fields: [],
+    supportedByPiAi: true,
+    planType: 'standard',
+    modelListStrategy: 'static',
+    staticModels: [
+      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', recommended: true },
+      { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+      { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+    ],
+    apiKeyUrl: 'https://aistudio.google.com/apikey',
+    docsUrl: 'https://ai.google.dev/docs',
+    modelsUrl: 'https://ai.google.dev/gemini-api/docs/models',
+  },
+  {
+    id: 'mistral',
+    displayName: 'Mistral',
+    group: 'api-key',
+    connectionType: 'api-key',
+    description: 'Modelos Mistral AI.',
+    defaultModel: 'mistral-large-latest',
+    modelRequired: true,
+    baseUrlRequired: false,
+    apiKeyRequired: true,
+    fields: [],
+    supportedByPiAi: true,
+    planType: 'standard',
+    modelListStrategy: 'api',
+    apiKeyUrl: 'https://console.mistral.ai',
+    docsUrl: 'https://docs.mistral.ai',
+    modelsUrl: 'https://docs.mistral.ai/getting-started/models/',
+  },
+  {
+    id: 'groq',
+    displayName: 'Groq',
+    group: 'api-key',
+    connectionType: 'api-key',
+    description: 'Inferencia rápida de Groq (Llama, Mixtral, etc).',
+    defaultModel: 'llama-3.3-70b-versatile',
+    modelRequired: true,
+    baseUrlRequired: false,
+    apiKeyRequired: true,
+    fields: [],
+    supportedByPiAi: true,
+    planType: 'standard',
+    modelListStrategy: 'api',
+    apiKeyUrl: 'https://console.groq.com/keys',
+    docsUrl: 'https://console.groq.com/docs',
+    modelsUrl: 'https://console.groq.com/docs/models',
+  },
+  {
+    id: 'xai',
+    displayName: 'xAI (Grok)',
+    group: 'api-key',
+    connectionType: 'api-key',
+    description: 'API key de xAI para los modelos Grok.',
+    defaultModel: 'grok-2-latest',
+    modelRequired: true,
+    baseUrlRequired: false,
+    apiKeyRequired: true,
+    fields: [],
+    supportedByPiAi: true,
+    planType: 'standard',
+    modelListStrategy: 'api',
+    apiKeyUrl: 'https://console.x.ai',
+    docsUrl: 'https://docs.x.ai',
+    modelsUrl: 'https://docs.x.ai/docs',
+  },
+  {
+    id: 'minimax',
+    displayName: 'MiniMax',
+    group: 'api-key',
+    connectionType: 'api-key',
+    description: 'API key de MiniMax para sus modelos.',
+    defaultModel: 'MiniMax-Text-01',
+    modelRequired: true,
+    baseUrlRequired: false,
+    apiKeyRequired: true,
+    fields: [],
+    supportedByPiAi: true,
+    planType: 'standard',
+    modelListStrategy: 'static',
+    staticModels: [
+      { id: 'MiniMax-Text-01', label: 'MiniMax-Text-01', recommended: true },
+      { id: 'MiniMax-M1', label: 'MiniMax-M1' },
+    ],
+    apiKeyUrl: 'https://platform.minimax.io',
+    docsUrl: 'https://platform.minimax.io/docs',
+    modelsUrl: 'https://platform.minimax.io/docs',
+  },
+  {
+    id: 'zai',
+    displayName: 'ZAI (GLM)',
+    group: 'api-key',
+    connectionType: 'api-key',
+    description: 'Modelos GLM de ZAI.',
+    defaultModel: 'glm-4.5',
+    modelRequired: true,
+    baseUrlRequired: false,
+    apiKeyRequired: true,
+    fields: [],
+    supportedByPiAi: true,
+    planType: 'standard',
+    modelListStrategy: 'static',
+    staticModels: [
+      { id: 'glm-4.5', label: 'GLM-4.5', recommended: true },
+      { id: 'glm-4', label: 'GLM-4' },
+    ],
+    apiKeyUrl: 'https://z.ai/model-api',
+    docsUrl: 'https://z.ai/model-api',
+    modelsUrl: 'https://z.ai/model-api',
+  },
+
+  // ───────────────────────────────────────────────
+  // Local / custom
+  // ───────────────────────────────────────────────
+  {
+    id: 'custom',
+    displayName: 'OpenAI-compatible (Ollama, LM Studio, vLLM…)',
+    group: 'custom',
+    connectionType: 'openai-compatible',
+    description:
+      'Conecta un endpoint OpenAI-compatible propio: Ollama, LM Studio, vLLM, LiteLLM, etc.',
+    warning:
+      'La URL debe ser alcanzable por el worker, no por el dispositivo móvil. Si ejecutas el worker en Docker, usa una IP accesible desde el contenedor.',
+    defaultBaseUrl: 'http://localhost:11434/v1',
+    defaultModel: 'llama-3.1-8b',
+    modelRequired: true,
+    baseUrlRequired: true,
+    apiKeyRequired: true,
+    fields: [
+      {
+        name: 'baseUrl',
+        label: 'Base URL',
+        required: true,
+        placeholder: 'http://localhost:11434/v1',
+        helperText:
+          'URL completa con prefijo /v1 si corresponde. Algunos endpoints permiten redes privadas (192.168.x.x).',
+      },
+    ],
+    supportedByPiAi: false,
+    planType: 'custom',
+    modelListStrategy: 'openai-compatible-models',
+    docsUrl: 'https://platform.openai.com/docs/api-reference',
+  },
+];
+
+export function getProviderEntries(providerId: string): ProviderCatalogEntry[] {
+  return PROVIDER_CATALOG.filter((entry) => entry.id === providerId);
+}
+
+export function getProviderEntry(
+  providerId: string,
+  connectionType?: string,
+): ProviderCatalogEntry | undefined {
+  if (connectionType) {
+    return PROVIDER_CATALOG.find(
+      (entry) => entry.id === providerId && entry.connectionType === connectionType,
+    );
+  }
+  return PROVIDER_CATALOG.find((entry) => entry.id === providerId);
+}
+
+export function isSubscriptionProvider(value: string): value is 'openai-codex' | 'anthropic' {
+  return value === 'openai-codex' || value === 'anthropic';
+}
+
+export function isKnownProviderId(value: string): boolean {
+  return PROVIDER_CATALOG.some((entry) => entry.id === value);
+}

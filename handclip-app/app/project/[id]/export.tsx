@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Linking } from 'react-native';
 import { PRESETS } from '../../../lib/constants';
-import { api } from '../../../services/api';
+import { api, subscribeJobProgress, PollerCallbacks, JobProgress } from '../../../services/api';
+import { useJobsStore, newClientRequestId } from '../../../stores/jobs.store';
+import { useProjectStore } from '../../../stores/project.store';
 
 type PresetKey = 'tiktok' | 'reels' | 'shorts';
 
@@ -16,35 +18,60 @@ export default function ExportScreen() {
   const { id, jobId, preset } = useLocalSearchParams<{ id: string; jobId: string; preset: string }>();
   const router = useRouter();
   const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState<'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'>('PENDING');
+  const [status, setStatus] = useState<'QUEUED' | 'ACTIVE' | 'COMPLETED' | 'FAILED'>('QUEUED');
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [offline, setOffline] = useState(false);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
+
+  // Register the job in the persisted store (idempotent — no-op if already
+  // there from app/import/processing or another call site).
+  useEffect(() => {
+    if (!jobId || !id) return;
+    useJobsStore.getState().addJob({
+      jobId,
+      projectId: id,
+      type: 'render',
+      status: 'queued',
+      progress: 0,
+      meta: preset ? { preset } : undefined,
+    });
+  }, [jobId, id, preset]);
 
   useEffect(() => {
     if (!jobId || !id) return;
-
-    const poll = async () => {
-      try {
-        const result = await api.getExportJob(id, jobId);
-        setProgress(result.progress);
-        setStatus(result.status as typeof status);
-
-        if (result.status === 'COMPLETED' && typeof result.result?.outputUrl === 'string') {
-          setOutputUrl(result.result.outputUrl);
-        } else if (result.status === 'FAILED') {
+    const callbacks: PollerCallbacks = {
+      onProgress: (data: JobProgress, s) => {
+        setOffline(s === 'offline');
+        if (s === 'offline') return;
+        setProgress(data.progress);
+        setStatus(data.status as typeof status);
+        if (data.status === 'COMPLETED') {
+          const url = data.result?.outputUrl ?? (data.result?.output_url as string | undefined);
+          if (typeof url === 'string') setOutputUrl(url);
+          if (id) {
+            useProjectStore.getState().fetchProject(id).catch(() => null);
+          }
+        } else if (data.status === 'FAILED') {
           setError('La exportación falló. Intenta de nuevo.');
         }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Error al obtener el estado de exportación');
-      }
+      },
+      onComplete: (result) => {
+        setStatus('COMPLETED');
+        const url = (result as { outputUrl?: string; output_url?: string } | undefined)?.outputUrl
+          ?? (result as { output_url?: string } | undefined)?.output_url;
+        if (typeof url === 'string') setOutputUrl(url);
+        if (id) useProjectStore.getState().fetchProject(id).catch(() => null);
+      },
+      onError: (err) => {
+        setError(err.message || 'La exportación falló.');
+        setStatus('FAILED');
+      },
     };
-
-    // Poll every 2 seconds
-    const interval = setInterval(poll, 2000);
-    // Initial poll
-    poll();
-
-    return () => clearInterval(interval);
+    unsubscribeRef.current = subscribeJobProgress(jobId, callbacks);
+    return () => {
+      unsubscribeRef.current?.();
+    };
   }, [jobId, id]);
 
   const handleDownload = async () => {
@@ -59,7 +86,7 @@ export default function ExportScreen() {
 
   const isComplete = status === 'COMPLETED';
   const isFailed = status === 'FAILED';
-  const isProcessing = status === 'PENDING' || status === 'PROCESSING';
+  const isProcessing = status === 'QUEUED' || status === 'ACTIVE';
 
   return (
     <View style={styles.container}>
@@ -90,8 +117,8 @@ export default function ExportScreen() {
         <View style={styles.successContainer}>
           <Text accessibilityRole="alert" style={styles.successIcon}>✓</Text>
           <Text accessibilityRole="alert" style={styles.successText}>Tu video está listo</Text>
-          <TouchableOpacity 
-            style={styles.downloadButton} 
+          <TouchableOpacity
+            style={styles.downloadButton}
             onPress={handleDownload}
             accessibilityLabel="Descargar clip"
             accessibilityRole="button"
@@ -114,7 +141,11 @@ export default function ExportScreen() {
             <View style={[styles.progressBar, { width: `${progress}%` }]} />
           </View>
           <Text accessibilityLabel={`Exportando clip, ${progress}%`} style={styles.progressText}>
-            {status === 'PENDING' ? 'Iniciando...' : `Renderizando... ${progress}%`}
+            {offline
+              ? 'Sin conexion — reintentando...'
+              : status === 'QUEUED'
+                ? 'Iniciando...'
+                : `Renderizando... ${progress}%`}
           </Text>
         </View>
       )}

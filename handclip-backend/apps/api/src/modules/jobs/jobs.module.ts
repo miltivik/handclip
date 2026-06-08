@@ -13,6 +13,7 @@ import { AuthModule } from '../auth/auth.module';
       { name: 'transcription' },
       { name: 'clip-analysis' },
       { name: 'render' },
+      { name: 'edit-prompt' },
     ),
   ],
   controllers: [JobsController],

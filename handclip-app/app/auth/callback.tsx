@@ -3,6 +3,7 @@ import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'rea
 import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
 import { completeAuthCallback } from '../../lib/auth-callback';
+import { supabase } from '../../services/supabase';
 
 export default function AuthCallbackScreen() {
   const url = Linking.useURL();
@@ -23,6 +24,12 @@ export default function AuthCallbackScreen() {
         await completeAuthCallback(callbackUrl);
         if (active) router.replace('/');
       } catch (error: any) {
+        const session = await waitForSession();
+        if (session) {
+          if (active) router.replace('/');
+          return;
+        }
+
         if (active) {
           setErrorMessage(error.message ?? 'No se pudo completar el inicio de sesion.');
         }
@@ -61,6 +68,18 @@ export default function AuthCallbackScreen() {
       )}
     </View>
   );
+}
+
+async function waitForSession() {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (session) return session;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  return null;
 }
 
 const styles = StyleSheet.create({

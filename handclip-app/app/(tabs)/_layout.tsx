@@ -7,6 +7,8 @@ import { useAppTheme } from '../../lib/theme';
 const TAB_TITLES: Record<string, string> = {
   home: 'Proyectos',
   library: 'Biblioteca',
+  usage: 'Uso',
+  ia: 'IA',
   settings: 'Configuración',
 };
 
@@ -62,6 +64,24 @@ export default function TabsLayout() {
           title: 'Biblioteca',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="folder" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="usage"
+        options={{
+          title: 'Uso',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="bar-chart" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="ia"
+        options={{
+          title: 'IA',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="sparkles" size={size} color={color} />
           ),
         }}
       />

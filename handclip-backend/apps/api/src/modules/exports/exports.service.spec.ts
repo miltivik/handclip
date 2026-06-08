@@ -10,6 +10,7 @@ function buildSupabaseMock() {
     const chain = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnThis(),
       single: jest.fn(),
     };
@@ -50,35 +51,53 @@ describe('ExportsService.findCompletedByUser', () => {
     service = moduleRef.get(ExportsService);
   });
 
-  it('filters by user_id via projects join', async () => {
-    const chain = {
+  it('loads user projects before querying exports', async () => {
+    const projectsChain = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnValue({
+        data: [{ id: 'project-1', title: 'Mi Video' }],
+        error: null,
+      }),
+    };
+    const exportsChain = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnValue({
         data: [],
         error: null,
       }),
     };
-    supabase.queueChain(chain);
+    supabase.queueChain(projectsChain);
+    supabase.queueChain(exportsChain);
     await service.findCompletedByUser('user-123');
-    expect(chain.eq).toHaveBeenCalledWith('projects.user_id', 'user-123');
+    expect(projectsChain.eq).toHaveBeenCalledWith('user_id', 'user-123');
+    expect(exportsChain.in).toHaveBeenCalledWith('project_id', ['project-1']);
   });
 
   it('only returns completed exports', async () => {
-    const chain = {
+    supabase.queueChain({
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnValue({
+        data: [{ id: 'project-1', title: 'Mi Video' }],
+        error: null,
+      }),
+    });
+    const exportsChain = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnValue({
         data: [],
         error: null,
       }),
     };
-    supabase.queueChain(chain);
+    supabase.queueChain(exportsChain);
     await service.findCompletedByUser('user-123');
-    expect(chain.eq).toHaveBeenCalledWith('status', 'completed');
+    expect(exportsChain.eq).toHaveBeenCalledWith('status', 'completed');
   });
 
-  it('maps project title from joined projects', async () => {
+  it('maps project title from project lookup', async () => {
     const mockData = [
       {
         id: 'export-1',
@@ -91,12 +110,19 @@ describe('ExportsService.findCompletedByUser', () => {
         duration: 30.5,
         created_at: '2024-01-01T00:00:00Z',
         completed_at: '2024-01-01T00:01:00Z',
-        projects: { title: 'Mi Video' },
       },
     ];
     supabase.queueChain({
       select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnValue({
+        data: [{ id: 'project-1', title: 'Mi Video' }],
+        error: null,
+      }),
+    });
+    supabase.queueChain({
+      select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnValue({ data: mockData, error: null }),
     });
 
@@ -118,12 +144,19 @@ describe('ExportsService.findCompletedByUser', () => {
         duration: null,
         created_at: '2024-01-02T00:00:00Z',
         completed_at: null,
-        projects: { title: null },
       },
     ];
     supabase.queueChain({
       select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnValue({
+        data: [{ id: 'project-2', title: null }],
+        error: null,
+      }),
+    });
+    supabase.queueChain({
+      select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnValue({ data: mockData, error: null }),
     });
 
@@ -135,7 +168,15 @@ describe('ExportsService.findCompletedByUser', () => {
   it('returns empty array when no completed exports exist', async () => {
     supabase.queueChain({
       select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnValue({
+        data: [{ id: 'project-1', title: 'Mi Video' }],
+        error: null,
+      }),
+    });
+    supabase.queueChain({
+      select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnValue({ data: null, error: null }),
     });
 
@@ -143,15 +184,45 @@ describe('ExportsService.findCompletedByUser', () => {
     expect(results).toEqual([]);
   });
 
+  it('returns empty array without querying exports when user has no projects', async () => {
+    supabase.queueChain({
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnValue({ data: [], error: null }),
+    });
+
+    const results = await service.findCompletedByUser('user-123');
+    expect(results).toEqual([]);
+    expect(supabase.getServiceRoleClient().from).toHaveBeenCalledTimes(1);
+  });
+
   it('throws when database returns an error', async () => {
     supabase.queueChain({
       select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnValue({
+        data: [{ id: 'project-1', title: 'Mi Video' }],
+        error: null,
+      }),
+    });
+    supabase.queueChain({
+      select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnValue({ data: null, error: { message: 'DB error' } }),
     });
 
     await expect(service.findCompletedByUser('user-123')).rejects.toMatchObject({
       message: 'DB error',
+    });
+  });
+
+  it('throws when project lookup returns an error', async () => {
+    supabase.queueChain({
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnValue({ data: null, error: { message: 'Project lookup failed' } }),
+    });
+
+    await expect(service.findCompletedByUser('user-123')).rejects.toMatchObject({
+      message: 'Project lookup failed',
     });
   });
 });

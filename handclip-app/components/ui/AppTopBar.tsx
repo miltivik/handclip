@@ -1,5 +1,6 @@
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../lib/theme';
 
 type IoniconName = keyof typeof Ionicons.glyphMap;
@@ -18,12 +19,18 @@ interface AppTopBarProps {
 
 export default function AppTopBar({ title, rightAction }: AppTopBarProps) {
   const { theme } = useAppTheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <View
       style={[
         styles.container,
-        { backgroundColor: theme.surfaceElevated, borderBottomColor: theme.border },
+        {
+          backgroundColor: theme.surfaceElevated,
+          borderBottomColor: theme.border,
+          minHeight: styles.container.minHeight + insets.top,
+          paddingTop: styles.container.paddingTop + insets.top,
+        },
       ]}
     >
       <View style={styles.brandGroup}>
@@ -68,7 +75,8 @@ const styles = StyleSheet.create({
   container: {
     minHeight: 64,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingTop: 10,
+    paddingBottom: 10,
     borderBottomWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',

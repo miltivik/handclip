@@ -2,6 +2,12 @@ import OpenAI from 'openai';
 import { join } from 'path';
 import { loadPiAiOAuth } from './pi-ai-loader';
 import { OAuthCredentialsStore } from './oauth-credentials.store';
+import {
+  ActiveApiKeySelection,
+  ActiveOAuthSelection,
+  ActiveSelection,
+  DatabaseAiConnectionStore,
+} from './database-ai-connection.store';
 import { PiProviderAdapter, PiProviderResult } from './pi-provider.adapter';
 
 export type ApiKeyProviderName = 'openai' | 'anthropic' | 'openrouter';
@@ -27,7 +33,7 @@ export interface StageTask {
 }
 
 export interface ProviderResult {
-  provider: ProviderName;
+  provider: ProviderName | string;
   model: string;
   content: string;
   usage: { inputTokens: number; outputTokens: number };
@@ -37,20 +43,17 @@ interface OAuthCredentialsReader {
   getApiKey(provider: string): Promise<string | null>;
 }
 
-interface DatabaseOAuthCredentialsReader {
-  getActiveApiKey(userId: string): Promise<{
-    apiKey: string;
-    provider: 'openai-codex' | 'anthropic';
-    resultProvider: 'openai-codex' | 'anthropic-subscription';
-  } | null>;
+interface DatabaseConnectionReader {
+  getActiveApiKey(userId: string): Promise<ActiveSelection | null>;
 }
 
 interface PiProviderCaller {
   call(request: {
-    provider: 'openai-codex' | 'anthropic';
-    resultProvider: ProviderName;
+    provider: string;
+    resultProvider: string;
     model: string;
     apiKey: string;
+    baseURL?: string;
     task: StageTask;
   }): Promise<PiProviderResult>;
 }
@@ -60,7 +63,7 @@ type OpenAiCaller = (provider: ProviderConfig, task: StageTask) => Promise<Provi
 export interface ProviderManagerOptions {
   env?: NodeJS.ProcessEnv;
   oauthCredentialsStore?: OAuthCredentialsReader;
-  databaseOAuthCredentialsStore?: DatabaseOAuthCredentialsReader;
+  databaseConnectionStore?: DatabaseConnectionReader;
   piAdapter?: PiProviderCaller;
   openAiCaller?: OpenAiCaller;
 }
@@ -135,7 +138,7 @@ export class ProviderManager {
   private readonly selection: LlmProviderSelection;
   private readonly allowApiKeyFallback: boolean;
   private readonly oauthCredentialsStore: OAuthCredentialsReader;
-  private readonly databaseOAuthCredentialsStore?: DatabaseOAuthCredentialsReader;
+  private readonly databaseConnectionStore?: DatabaseConnectionReader;
   private readonly piAdapter: PiProviderCaller;
   private readonly openAiCaller: OpenAiCaller;
   private byokConfig: { enabled: boolean; provider: ApiKeyProviderName; apiKey: string } | null =
@@ -158,7 +161,7 @@ export class ProviderManager {
           return piAiOAuth.getOAuthApiKey(provider, credentials);
         },
       );
-    this.databaseOAuthCredentialsStore = options.databaseOAuthCredentialsStore;
+    this.databaseConnectionStore = options.databaseConnectionStore;
   }
 
   enableBYOK(provider: ApiKeyProviderName, apiKey: string) {
@@ -172,23 +175,54 @@ export class ProviderManager {
   }
 
   async callWithUserProvider(task: StageTask, userId: string): Promise<ProviderResult> {
-    if (!this.databaseOAuthCredentialsStore) {
-      throw new Error('No database OAuth credentials store configured');
+    if (!this.databaseConnectionStore) {
+      throw new Error('No database AI connection store configured');
     }
-    const selected = await this.databaseOAuthCredentialsStore.getActiveApiKey(userId);
+    const selected = await this.databaseConnectionStore.getActiveApiKey(userId);
     if (!selected) {
-      throw new Error('No active OAuth connection found for user');
+      throw new Error('No active AI connection found for user');
     }
-    return this.piAdapter.call({
+    if (selected.type === 'oauth') {
+      return this.callOauthSelection(task, selected);
+    }
+    return this.callApiKeySelection(task, selected);
+  }
+
+  private async callOauthSelection(
+    task: StageTask,
+    selected: ActiveOAuthSelection,
+  ): Promise<ProviderResult> {
+    return (await this.piAdapter.call({
       provider: selected.provider,
       resultProvider: selected.resultProvider,
-      model:
-        selected.provider === 'openai-codex'
-          ? this.env.HANDCLIP_CODEX_MODEL || 'gpt-5.3-codex'
-          : this.env.HANDCLIP_ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+      model: this.modelForProvider(selected.provider, selected.resultProvider),
       apiKey: selected.apiKey,
       task,
-    }) as Promise<ProviderResult>;
+    })) as ProviderResult;
+  }
+
+  private async callApiKeySelection(
+    task: StageTask,
+    selected: ActiveApiKeySelection,
+  ): Promise<ProviderResult> {
+    return (await this.piAdapter.call({
+      provider: selected.provider,
+      resultProvider: selected.resultProvider,
+      model: selected.model,
+      apiKey: selected.apiKey,
+      baseURL: selected.baseUrl ?? undefined,
+      task,
+    })) as ProviderResult;
+  }
+
+  private modelForProvider(provider: 'openai-codex' | 'anthropic', resultProvider: string): string {
+    if (resultProvider === 'anthropic-subscription') {
+      return this.env.HANDCLIP_ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+    }
+    if (provider === 'openai-codex') {
+      return this.env.HANDCLIP_CODEX_MODEL || 'gpt-5.3-codex';
+    }
+    return this.env.HANDCLIP_ANTHROPIC_MODEL || 'claude-sonnet-4-6';
   }
 
   async callWithFallback(task: StageTask): Promise<ProviderResult> {
@@ -222,10 +256,7 @@ export class ProviderManager {
     return this.piAdapter.call({
       provider: oauthProvider,
       resultProvider: provider,
-      model:
-        provider === 'openai-codex'
-          ? this.env.HANDCLIP_CODEX_MODEL || 'gpt-5.3-codex'
-          : this.env.HANDCLIP_ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+      model: this.modelForProvider(oauthProvider, provider),
       apiKey,
       task,
     }) as Promise<ProviderResult>;
@@ -311,3 +342,4 @@ export class ProviderManager {
 }
 
 export const providerManager = new ProviderManager();
+export { DatabaseAiConnectionStore };

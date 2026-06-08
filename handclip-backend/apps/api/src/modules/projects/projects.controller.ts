@@ -50,6 +50,56 @@ function parseTextOverlay(value: unknown): TextOverlay | null {
   return { text: trimmed, position: obj['position'] as TextOverlayPosition };
 }
 
+function parseClientRequestId(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') {
+    throw new BadRequestException('clientRequestId must be a string');
+  }
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length > 200) {
+    throw new BadRequestException('clientRequestId must be 200 characters or less');
+  }
+  return trimmed;
+}
+
+function parseMusicUrl(value: unknown, userId: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') {
+    throw new BadRequestException('musicUrl must be a string');
+  }
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length > 500) {
+    throw new BadRequestException('musicUrl must be 500 characters or less');
+  }
+  const prefix = `${userId}/music/`;
+  if (
+    !trimmed.startsWith(prefix) ||
+    trimmed.length === prefix.length ||
+    trimmed.includes('..') ||
+    trimmed.includes('\\') ||
+    trimmed.includes('//')
+  ) {
+    throw new BadRequestException('musicUrl must be an uploaded audio storage path');
+  }
+  return trimmed;
+}
+
+function parsePrompt(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new BadRequestException('prompt must be a string');
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new BadRequestException('prompt must not be empty');
+  }
+  if (trimmed.length > 2000) {
+    throw new BadRequestException('prompt must be 2000 characters or less');
+  }
+  return trimmed;
+}
+
 @Controller('projects')
 @UseGuards(BearerUserGuard)
 export class ProjectsController {
@@ -126,9 +176,16 @@ export class ProjectsController {
   async analyze(
     @CurrentUser() user: ResolvedUser,
     @Param('id') id: string,
+    @Body() body?: { clientRequestId?: string },
   ) {
-    const videoUrl = await this.projectsService.getSignedVideoUrl(id, user.id);
-    const result = await this.jobsService.enqueueAnalysis(id, user.id, videoUrl);
+    const clientRequestId = parseClientRequestId(body?.clientRequestId);
+    const sourceVideoPath = await this.projectsService.getSourceVideoPath(id, user.id);
+    const result = await this.jobsService.enqueueAnalysis(
+      id,
+      user.id,
+      sourceVideoPath,
+      clientRequestId,
+    );
     return { jobId: result.jobId };
   }
 
@@ -148,21 +205,23 @@ export class ProjectsController {
       preset: 'tiktok' | 'reels' | 'shorts' | 'draft' | 'hq';
       speed?: number;
       textOverlay?: { text: string; position: 'top' | 'center' | 'bottom' };
+      clientRequestId?: string;
     },
   ) {
-    const videoUrl = await this.projectsService.getVideoUrl(id, user.id);
+    const sourceVideoPath = await this.projectsService.getSourceVideoPath(id, user.id);
     const speed = parseExportSpeed(body.speed);
-    // Defensively validate textOverlay in worker as well (see jobs.service.ts)
     const textOverlay = parseTextOverlay(body.textOverlay);
+    const clientRequestId = parseClientRequestId(body.clientRequestId);
+    const musicUrl = parseMusicUrl(body.musicUrl, user.id);
 
     const result = await this.jobsService.enqueueRender({
       projectId: id,
       userId: user.id,
-      videoUrl,
+      sourceVideoPath,
       trimStart: body.trimStart,
       trimEnd: body.trimEnd,
       subtitles: body.subtitles,
-      musicUrl: body.musicUrl,
+      musicUrl,
       musicVolume: body.musicVolume,
       musicFadeIn: body.musicFadeIn,
       musicFadeOut: body.musicFadeOut,
@@ -170,6 +229,7 @@ export class ProjectsController {
       clipId: body.clipId,
       speed,
       textOverlay,
+      clientRequestId,
     });
 
     return result;
@@ -182,5 +242,17 @@ export class ProjectsController {
     @Param('jobId') jobId: string,
   ) {
     return this.jobsService.getJobForUser(jobId, user.id);
+  }
+
+  @Post(':id/edit-prompt')
+  async editPrompt(
+    @CurrentUser() user: ResolvedUser,
+    @Param('id') id: string,
+    @Body() body: { prompt: string; clientRequestId?: string },
+  ) {
+    const prompt = parsePrompt(body?.prompt);
+    const clientRequestId = parseClientRequestId(body?.clientRequestId);
+    await this.projectsService.findOne(id, user.id);
+    return this.jobsService.enqueueEditPrompt(id, user.id, prompt, clientRequestId);
   }
 }

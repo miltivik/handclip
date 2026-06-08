@@ -9,7 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { UploadsService } from './uploads.service';
+import { MAX_AUDIO_SIZE_BYTES, UploadsService } from './uploads.service';
 import { BearerUserGuard } from '../auth/bearer-user.guard';
 import { CurrentUser, ResolvedUser } from '../auth/current-user.decorator';
 
@@ -30,6 +30,15 @@ export class UploadsController {
       body.mimeType,
     );
     return uploadId;
+  }
+
+  @Post('audio')
+  @UseInterceptors(FileInterceptor('audio', { limits: { fileSize: MAX_AUDIO_SIZE_BYTES } }))
+  async uploadAudio(
+    @CurrentUser() user: ResolvedUser,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.uploadsService.uploadAudio(file, user.id);
   }
 
   @Post(':uploadId/chunk')

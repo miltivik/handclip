@@ -76,13 +76,31 @@ export class ExportsService {
 
   async findCompletedByUser(userId: string): Promise<UserExport[]> {
     const client = this.supabaseService.getServiceRoleClient();
+    const { data: projects, error: projectsError } = await client
+      .from('projects')
+      .select('id, title')
+      .eq('user_id', userId);
+
+    if (projectsError) {
+      throw projectsError;
+    }
+
+    const projectIds = (projects ?? []).map((project) => project.id);
+    if (projectIds.length === 0) {
+      return [];
+    }
+
+    const projectTitles = new Map(
+      (projects ?? []).map((project) => [project.id, project.title]),
+    );
+
     const { data, error } = await client
       .from('exports')
       .select(
-        'id, project_id, clip_id, preset, status, output_url, file_size, duration, created_at, completed_at, projects:title',
+        'id, project_id, clip_id, preset, status, output_url, file_size, duration, created_at, completed_at',
       )
       .eq('status', 'completed')
-      .eq('projects.user_id', userId)
+      .in('project_id', projectIds)
       .order('created_at', { ascending: false });
     if (error) {
       throw error;
@@ -98,7 +116,7 @@ export class ExportsService {
       duration: exportRecord.duration,
       created_at: exportRecord.created_at,
       completed_at: exportRecord.completed_at,
-      project_title: exportRecord.projects?.title || 'Proyecto sin nombre',
+      project_title: projectTitles.get(exportRecord.project_id) || 'Proyecto sin nombre',
     }));
   }
 }

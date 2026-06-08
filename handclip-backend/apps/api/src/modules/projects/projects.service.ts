@@ -191,6 +191,23 @@ export class ProjectsService {
     return this.getSignedVideoUrl(projectId, userId);
   }
 
+  /**
+   * Returns the storage path (e.g. "userId/projectId/input.mp4") of the
+   * project's source video. The path is the canonical reference: it is
+   * safe to pass through queue payloads and survives long-running jobs
+   * (no 1h signed-URL expiry). Use `signStoragePath` at download time.
+   */
+  async getSourceVideoPath(projectId: string, userId: string): Promise<string> {
+    const project = await this.assertOwnedBy(projectId, userId);
+    if (!project.source_video_url) {
+      throw new NotFoundException('Video not found for this project');
+    }
+    if (!project.source_video_url.startsWith(`${userId}/`)) {
+      throw new NotFoundException('Video not found');
+    }
+    return project.source_video_url;
+  }
+
   async assertOwnedBy(projectId: string, userId: string): Promise<ProjectRow> {
     const { data, error } = await this.supabaseService
       .getServiceRoleClient()
