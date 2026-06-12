@@ -37,20 +37,25 @@ export default function HomeTab() {
   const router = useRouter();
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const loadProjects = async (silent = false) => {
+    if (!silent) setIsLoading(true);
+    setError(null);
+    try {
+      const data = await api.getProjects();
+      setProjects(data);
+    } catch (err: any) {
+      setError(err?.message || 'Error al cargar proyectos');
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
   useEffect(() => {
-    api.getProjects()
-      .then((data) => {
-        setProjects(data);
-        setError(null);
-      })
-      .catch((err: Error) => {
-        setError(err?.message || 'Error al cargar proyectos');
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
+    loadProjects();
   }, []);
 
   const handleProjectPress = (projectId: string) => {
@@ -58,19 +63,7 @@ export default function HomeTab() {
   };
 
   const handleRetry = () => {
-    setIsLoading(true);
-    setError(null);
-    api.getProjects()
-      .then((data) => {
-        setProjects(data);
-        setError(null);
-      })
-      .catch((err: Error) => {
-        setError(err?.message || 'Error al cargar proyectos');
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
+    loadProjects();
   };
 
   if (isLoading) {
@@ -124,6 +117,11 @@ export default function HomeTab() {
         )}
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
+        refreshing={isRefreshing}
+        onRefresh={() => {
+          setIsRefreshing(true);
+          loadProjects(true);
+        }}
       />
     </View>
   );

@@ -10,22 +10,38 @@ if (missing.length > 0) {
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
+const SHUTDOWN_TIMEOUT_MS = 30_000;
+
 async function bootstrap() {
-  const app = await NestFactory.createApplicationContext(AppModule);
+  const app = await NestFactory.create(AppModule);
 
-  console.log('HandClip Worker is running');
+  const port = parseInt(process.env.WORKER_PORT || '3001', 10);
+  await app.listen(port);
+  console.log(`HandClip Worker running on http://localhost:${port}`);
+  console.log(`Health check: http://localhost:${port}/health`);
 
-  process.on('SIGTERM', async () => {
-    console.log('SIGTERM received, shutting down gracefully');
-    await app.close();
-    process.exit(0);
-  });
+  const shutdown = async (signal: string) => {
+    console.log(`${signal} received, shutting down gracefully (max ${SHUTDOWN_TIMEOUT_MS / 1000}s)...`);
 
-  process.on('SIGINT', async () => {
-    console.log('SIGINT received, shutting down gracefully');
-    await app.close();
-    process.exit(0);
-  });
+    // Force exit if graceful shutdown takes too long
+    const forceExit = setTimeout(() => {
+      console.error(`Graceful shutdown timed out after ${SHUTDOWN_TIMEOUT_MS / 1000}s, forcing exit`);
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+
+    try {
+      await app.close();
+      console.log('Worker shut down gracefully');
+    } catch (err) {
+      console.error('Error during shutdown:', err);
+    } finally {
+      clearTimeout(forceExit);
+      process.exit(0);
+    }
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 bootstrap();

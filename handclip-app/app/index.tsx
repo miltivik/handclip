@@ -42,21 +42,19 @@ export default function HomeScreen() {
     setError(null);
 
     try {
-      // 1. Upload with chunked upload to get videoUrl
-      const { videoUrl } = await api.uploadVideoFile({
-        uri: asset.uri,
-        fileName,
-        mimeType: 'video/mp4',
-        fileSize,
-      });
+      // 1. Upload video via multipart to get videoUrl + projectId
+      const { videoUrl, projectId } = await api.uploadVideoFile(asset.uri, fileName);
 
-      // 2. Create project with the uploaded video URL
-      const { projectId } = await api.createProject({
-        name: fileName.replace(/\.[^/.]+$/, ''),
-        sourceVideoUrl: videoUrl,
-        duration: Math.round(duration),
-        width: asset.width ?? 0,
-        height: asset.height ?? 0,
+      // 2. Navigate to processing with real metadata
+      router.push({
+        pathname: '/import/processing',
+        params: {
+          projectId,
+          videoUrl: encodeURIComponent(videoUrl),
+          duration: String(Math.round(duration)),
+          width: String(asset.width ?? 0),
+          height: String(asset.height ?? 0),
+        },
       });
 
       // 3. Navigate to processing with real metadata

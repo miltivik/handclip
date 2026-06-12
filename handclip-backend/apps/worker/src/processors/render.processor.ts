@@ -3,13 +3,15 @@ import { Job } from 'bullmq';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { SupabaseService } from '../modules/supabase/supabase.service';
+import { validateTempPath } from '../utils/validate-path';
+import { validatePublicUrl } from '@handclip/shared';
 import { incrementExportCount } from '../providers/export-counter';
+import { MIN_CLIP_DURATION_SEC, MAX_CLIP_DURATION_SEC } from '@handclip/shared';
 
 const execAsync = promisify(exec);
-
 interface RenderJobData {
   projectId: string;
   userId: string;
@@ -41,7 +43,7 @@ const PRESETS = {
   hq:       { width: 1080, height: 1920, videoBitrate: '20M', audioBitrate: '256k', crf: 15, preset: 'slow' },
 };
 
-@Processor('render')
+@Processor('render', { lockDuration: 600000, lockRenewTime: 30000 })
 export class RenderProcessor extends WorkerHost {
   constructor(private readonly supabaseService: SupabaseService) {
     super();
@@ -69,23 +71,29 @@ export class RenderProcessor extends WorkerHost {
       console.error(`[Render] Failed to create job record: ${jobCreateError.message}`);
     }
     const dbJobId = jobRecord?.id;
-
-    // Create export record in DB
-    const { data: exportRecord, error: exportCreateError } = await supabase
+    // Look up pre-created export record (from enqueueRender)
+    const { data: exportRecord } = await supabase
       .from('exports')
-      .insert({
-        project_id: projectId,
-        clip_id: clipId || null,
-        preset,
-        status: 'rendering',
-      })
       .select('id')
+      .eq('project_id', projectId)
+      .eq('status', 'queued')
+      .order('created_at', { ascending: false })
+      .limit(1)
       .single();
 
-    if (exportCreateError) {
-      console.error(`[Render] Failed to create export record: ${exportCreateError.message}`);
+    let dbExportId: string | undefined;
+    if (!exportRecord) {
+      // Fallback: create export record
+      const { data: newExport } = await supabase
+        .from('exports')
+        .insert({ project_id: projectId, clip_id: clipId || null, preset, status: 'rendering' })
+        .select('id')
+        .single();
+      dbExportId = newExport?.id;
+    } else {
+      dbExportId = exportRecord.id;
+      await supabase.from('exports').update({ status: 'rendering' }).eq('id', dbExportId);
     }
-    const dbExportId = exportRecord?.id;
 
     const tempDir = os.tmpdir();
     const musicPath = musicUrl ? path.join(tempDir, `${projectId}-music.mp3`) : null;
@@ -94,6 +102,12 @@ export class RenderProcessor extends WorkerHost {
     const srtPath = path.join(tempDir, `${projectId}-subs.srt`);
     const thumbPath = path.join(tempDir, `${projectId}-thumb.jpg`);
 
+    // Validate all temp paths before passing to FFmpeg
+    validateTempPath(inputPath);
+    validateTempPath(outputPath);
+    validateTempPath(srtPath);
+    validateTempPath(thumbPath);
+    if (musicPath) validateTempPath(musicPath);
     // Check export limit for free tier (3/month)
     const { allowed, count } = await incrementExportCount(userId, supabase);
     if (!allowed) {
@@ -107,18 +121,46 @@ export class RenderProcessor extends WorkerHost {
       throw err;
     }
 
+    // Pre-flight validation: trim duration
+    const clipDuration = trimEnd - trimStart;
+    if (clipDuration < MIN_CLIP_DURATION_SEC) {
+      const err = new Error(`Clip demasiado corto (${clipDuration.toFixed(1)}s). Mínimo: ${MIN_CLIP_DURATION_SEC}s`);
+      await this.failJob(dbJobId, dbExportId, supabase, err.message);
+      throw err;
+    }
+    if (clipDuration > MAX_CLIP_DURATION_SEC) {
+      const err = new Error(`Clip demasiado largo (${clipDuration.toFixed(1)}s). Máximo: ${MAX_CLIP_DURATION_SEC}s`);
+      await this.failJob(dbJobId, dbExportId, supabase, err.message);
+      throw err;
+    }
+
+    if (trimStart >= trimEnd) {
+      const err = new Error(`trimStart (${trimStart}) debe ser menor que trimEnd (${trimEnd})`);
+      await this.failJob(dbJobId, dbExportId, supabase, err.message);
+      throw err;
+    }
+
     try {
       if (dbJobId) await supabase.from('jobs').update({ progress: 5 }).eq('id', dbJobId);
       await job.updateProgress(5);
-
       // Step 1: Download video
+      let downloadUrl: string;
       if (videoUrl.startsWith('http')) {
-        const res = await fetch(videoUrl);
-        fs.writeFileSync(inputPath, Buffer.from(await res.arrayBuffer()));
+        downloadUrl = await validatePublicUrl(videoUrl);
       } else {
-        fs.copyFileSync(videoUrl, inputPath);
+        downloadUrl = videoUrl; // local file path
       }
 
+      if (downloadUrl.startsWith('http')) {
+        const res = await fetch(downloadUrl);
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.startsWith('video/') && !contentType.startsWith('audio/')) {
+          throw new Error(`Unexpected content type: ${contentType}. Expected video/audio.`);
+        }
+        fs.writeFileSync(inputPath, Buffer.from(await res.arrayBuffer()));
+      } else {
+        fs.copyFileSync(downloadUrl, inputPath);
+      }
       if (dbJobId) await supabase.from('jobs').update({ progress: 15 }).eq('id', dbJobId);
       await job.updateProgress(15);
 
@@ -130,57 +172,33 @@ export class RenderProcessor extends WorkerHost {
 
       // Step 3: Download music if provided
       if (musicUrl && musicPath) {
-        const res = await fetch(musicUrl);
+        const safeMusicUrl = await validatePublicUrl(musicUrl);
+        const res = await fetch(safeMusicUrl);
         fs.writeFileSync(musicPath, Buffer.from(await res.arrayBuffer()));
       }
 
       if (dbJobId) await supabase.from('jobs').update({ progress: 25 }).eq('id', dbJobId);
       await job.updateProgress(25);
 
-      // Step 4: Build FFmpeg command
-      const cmd = this.buildFFmpegCommand({
-        inputPath,
-        srtPath: subtitles.length > 0 ? srtPath : null,
-        musicPath,
-        trimStart,
-        trimEnd,
-        config,
-        musicVolume,
-        musicFadeIn,
-        musicFadeOut,
-        outputPath,
-      });
-
-      if (dbJobId) await supabase.from('jobs').update({ progress: 30 }).eq('id', dbJobId);
-      await job.updateProgress(30);
-      console.log(`[Render] FFmpeg: ${cmd}`);
-
-      // Step 5: Execute FFmpeg with codec fallback
+      // Step 5: Execute FFmpeg with codec fallback (2 levels, no H.265)
+      // Uses spawn for granular stderr-based progress
       const codecFallbacks = [
         { codec: 'libx264', preset: config.preset, crf: config.crf },
-        { codec: 'libx265', preset: 'fast', crf: 23 },       // H.265 fallback
-        { codec: 'libx264', preset: 'ultrafast', crf: 28 },   // speed-over-quality fallback
+        { codec: 'libx264', preset: 'ultrafast', crf: 28 },
       ];
       let lastError: Error | null = null;
+
       for (let attempt = 0; attempt < codecFallbacks.length; attempt++) {
         const fb = codecFallbacks[attempt];
-        const attemptCmd = this.buildFFmpegCommand({
-          inputPath,
-          srtPath: subtitles.length > 0 ? srtPath : null,
-          musicPath,
-          trimStart,
-          trimEnd,
-          config,
-          musicVolume,
-          musicFadeIn,
-          musicFadeOut,
-          outputPath,
-          codec: fb.codec,
-          preset: fb.preset,
-          crf: fb.crf,
+        const attemptArgs = this.buildFFmpegCommand({
+          inputPath, srtPath: subtitles.length > 0 ? srtPath : null,
+          musicPath, trimStart, trimEnd, config,
+          musicVolume, musicFadeIn, musicFadeOut, outputPath,
+          codec: fb.codec, preset: fb.preset, crf: fb.crf,
         });
+
         try {
-          await execAsync(attemptCmd, { timeout: 300000 });
+          await this.runFFmpegWithProgress(attemptArgs, clipDuration, job, dbJobId, supabase);
           lastError = null;
           break;
         } catch (err: any) {
@@ -196,10 +214,20 @@ export class RenderProcessor extends WorkerHost {
       const midPoint = trimStart + (trimEnd - trimStart) / 2;
       let thumbnailUrl: string | null = null;
       try {
-        await execAsync(
-          `ffmpeg -ss ${midPoint} -i "${inputPath}" -vframes 1 -q:v 2 -y "${thumbPath}"`,
-          { timeout: 10000 }
-        );
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn('ffmpeg', [
+            '-ss', String(midPoint),
+            '-i', inputPath,
+            '-vframes', '1',
+            '-q:v', '2',
+            '-y', thumbPath,
+          ], { timeout: 10000 });
+          child.on('close', (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(`Thumbnail ffmpeg exited with code ${code}`));
+          });
+          child.on('error', reject);
+        });
         // Upload thumbnail to Supabase Storage
         const thumbBuffer = fs.readFileSync(thumbPath);
         const thumbStoragePath = `${projectId}/${preset}/thumbnail.jpg`;
@@ -260,7 +288,6 @@ export class RenderProcessor extends WorkerHost {
             output_url: outputUrl,
             file_size: fileSize,
             duration,
-            thumbnail_url: thumbnailUrl,
             completed_at: new Date().toISOString(),
           })
           .eq('id', dbExportId);
@@ -289,15 +316,19 @@ export class RenderProcessor extends WorkerHost {
 
       // Send push notification
       const API_BASE = process.env.API_URL || 'http://localhost:3000';
+      const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || '';
       try {
         await fetch(`${API_BASE}/api/notifications/push`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(INTERNAL_API_KEY ? { 'X-Internal-API-Key': INTERNAL_API_KEY } : {}),
+          },
           body: JSON.stringify({
             userId,
             title: '¡Tu clip está listo!',
             message: `El clip en formato ${preset} se ha exportado correctamente.`,
-            data: { projectId, exportId: dbExportId, type: 'export_complete' },
+            data: { projectId, exportId: dbExportId, type: 'export_complete', deepLink: `handclip://project/${projectId}/export?exportId=${dbExportId}` },
           }),
         });
       } catch (err: any) {
@@ -348,7 +379,11 @@ export class RenderProcessor extends WorkerHost {
     return segments.map((seg, i) => {
       const start = this.formatSRTTime(seg.startTime);
       const end = this.formatSRTTime(seg.endTime);
-      return `${i + 1}\n${start} --> ${end}\n${seg.text}\n`;
+      const safeText = seg.text
+        .replace(/-->/g, '→')
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+        .substring(0, 500);
+      return `${i + 1}\n${start} --> ${end}\n${safeText}\n`;
     }).join('\n');
   }
 
@@ -360,7 +395,7 @@ export class RenderProcessor extends WorkerHost {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
   }
 
-  /** Construir comando FFmpeg completo */
+  /** Construir comando FFmpeg completo — devuelve array de argumentos para spawn */
   private buildFFmpegCommand(opts: {
     inputPath: string;
     srtPath: string | null;
@@ -375,11 +410,10 @@ export class RenderProcessor extends WorkerHost {
     codec?: string;
     preset?: string;
     crf?: number;
-  }): string {
+  }): string[] {
     const { inputPath, srtPath, musicPath, trimStart, trimEnd, config, musicVolume, musicFadeIn, musicFadeOut, outputPath, codec, preset, crf } = opts;
     const duration = trimEnd - trimStart;
 
-    // Filter chain for video
     const videoFilters: string[] = [];
 
     // Trim
@@ -397,56 +431,108 @@ export class RenderProcessor extends WorkerHost {
 
     const videoFilterStr = videoFilters.join(',');
 
-    // Build the full command
-    let cmd = `ffmpeg -i "${inputPath}"`;
+    const args: string[] = [];
+    args.push('-i', inputPath);
+    if (musicPath) args.push('-i', musicPath);
 
-    // Add music input if provided
-    if (musicPath) {
-      cmd += ` -i "${musicPath}"`;
-    }
-
-    // Filter complex
+    // Filter complex — [0:a]? for optional audio (won't fail on silent video)
     const filterParts: string[] = [];
     filterParts.push(`[0:v]${videoFilterStr}[vout]`);
 
-    // Audio: trim original audio
     const fadeOutStart = Math.max(0, duration - 0.5);
-    filterParts.push(`[0:a]atrim=start=${trimStart}:duration=${duration},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.1,afade=t=out:st=${fadeOutStart}:d=0.5[vaudio]`);
+    filterParts.push(`[0:a]?atrim=start=${trimStart}:duration=${duration},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.1,afade=t=out:st=${fadeOutStart}:d=0.5[vaudio]`);
 
     if (musicPath && musicVolume !== undefined) {
-      // Music processing
       let musicChain = `[1:a]atrim=start=0:duration=${duration},asetpts=PTS-STARTPTS`;
-
-      // Volume (0-200%, default 30% when there's voice)
-      const vol = musicVolume !== undefined ? musicVolume / 100 : 0.3;
+      const vol = musicVolume / 100;
       musicChain += `,volume=${vol}`;
-
-      // Fade
       musicChain += `,afade=t=in:st=0:d=${musicFadeIn || 0.5}`;
       musicChain += `,afade=t=out:st=${duration - (musicFadeOut || 0.5)}:d=${musicFadeOut || 0.5}`;
-      musicChain += `[m audio]`;
+      musicChain += `[maudio]`;
       filterParts.push(musicChain);
-
-      // Mix voice + music
-      filterParts.push(`[vaudio][m audio]amix=inputs=2:duration=first:dropout_transition=2,volume=1.2[aout]`);
+      filterParts.push(`[vaudio][maudio]amix=inputs=2:duration=first:dropout_transition=2,volume=1.2[aout]`);
     } else {
       filterParts.push(`[vaudio]volume=1.0[aout]`);
     }
 
-    cmd += ` -filter_complex "${filterParts.join(';')}"`;
-    cmd += ` -map "[vout]" -map "[aout]"`;
+    args.push('-filter_complex', filterParts.join(';'));
+    args.push('-map', '[vout]', '-map', '[aout]');
+
     const finalCodec = codec || 'libx264';
     const finalPreset = preset || config.preset;
     const finalCrf = crf !== undefined ? crf : config.crf;
-    cmd += ` -c:v ${finalCodec} -preset ${finalPreset} -crf ${finalCrf}`;
-    // Robust bitrate parsing: handle both '8M' and '8000k' formats
-    const bitrateNum = parseInt(config.videoBitrate.replace(/[^0-9]/g, ''), 10);
-    cmd += ` -maxrate ${config.videoBitrate} -bufsize ${bitrateNum * 2}k`;
-    cmd += ` -pix_fmt yuv420p`;
-    cmd += ` -c:a aac -b:a ${config.audioBitrate} -ar 48000`;
-    cmd += ` -movflags +faststart`;
-    cmd += ` -y "${outputPath}"`;
 
-    return cmd;
+    args.push('-c:v', finalCodec, '-preset', finalPreset, '-crf', String(finalCrf));
+    const bitrateNum = parseInt(config.videoBitrate.replace(/[^0-9]/g, ''), 10);
+    args.push('-maxrate', config.videoBitrate, '-bufsize', `${bitrateNum * 2}k`);
+    args.push('-pix_fmt', 'yuv420p');
+    args.push('-c:a', 'aac', '-b:a', config.audioBitrate, '-ar', '48000');
+    args.push('-movflags', '+faststart');
+    args.push('-y', outputPath);
+
+    return args;
+  }
+  /** Execute FFmpeg via spawn, extracting progress from stderr time= lines */
+  private runFFmpegWithProgress(
+    args: string[],
+    totalDuration: number,
+    job: Job<RenderJobData>,
+    dbJobId: string | undefined,
+    supabase: ReturnType<SupabaseService['getServiceRoleClient']>,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn('ffmpeg', args, { timeout: 300000 });
+
+      let stderr = '';
+
+      child.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString();
+        const match = data.toString().match(/time=(\d+):(\d+):(\d+\.\d+)/);
+        if (match && totalDuration > 0) {
+          const seconds =
+            parseInt(match[1], 10) * 3600 +
+            parseInt(match[2], 10) * 60 +
+            parseFloat(match[3]);
+          const progress = Math.min(90, Math.round(30 + (seconds / totalDuration) * 60));
+          job.updateProgress(progress).catch(() => {});
+          if (dbJobId) {
+            supabase.from('jobs').update({ progress }).eq('id', dbJobId).then(
+              () => {},
+              () => {},
+            );
+          }
+        }
+      });
+
+      child.on('close', (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-500)}`));
+        }
+      });
+
+      child.on('error', (err) => {
+        reject(new Error(`FFmpeg spawn failed: ${err.message}`));
+      });
+    });
+  }
+
+  /** Mark both job and export as failed */
+  private async failJob(
+    dbJobId: string | undefined,
+    dbExportId: string | undefined,
+    supabase: ReturnType<SupabaseService['getServiceRoleClient']>,
+    errorMessage: string,
+  ): Promise<void> {
+    if (dbJobId) {
+      await supabase
+        .from('jobs')
+        .update({ status: 'failed', result: { error: errorMessage }, updated_at: new Date().toISOString() })
+        .eq('id', dbJobId);
+    }
+    if (dbExportId) {
+      await supabase.from('exports').update({ status: 'failed' }).eq('id', dbExportId);
+    }
   }
 }

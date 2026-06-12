@@ -47,10 +47,11 @@ export default function ProjectScreen() {
   if (clips.length === 0) {
     return (
       <EmptyState
+        icon="cut-outline"
         title="No se encontraron clips"
-        description="No se detectaron momentos destacados en el video."
-        actionLabel="Importar otro video"
-        onAction={() => router.push('/import')}
+        subtitle="No se detectaron momentos destacados en el video."
+        ctaLabel="Importar otro video"
+        onCtaPress={() => router.push('/import')}
       />
     );
   }

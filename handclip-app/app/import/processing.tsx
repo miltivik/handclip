@@ -1,8 +1,8 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import ProgressBar from '../../components/ui/ProgressBar';
-import { api, subscribeJobProgress, ClipCandidate } from '../../services/api';
+import { api, JobProgress } from '../../services/api';
 import { useProjectStore } from '../../stores/project.store';
 
 const STAGES = [
@@ -17,52 +17,59 @@ export default function ProcessingScreen() {
   const [stage, setStage] = useState(0);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const unsubscribeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!params.projectId || !params.videoUrl) {
-      setError('Faltan parámetros: projectId o videoUrl');
+      setError('Faltan parámetros del proyecto');
       return;
     }
 
+    let cancelled = false;
+    let interval: ReturnType<typeof setInterval> | undefined;
+
     const runAnalysis = async () => {
       try {
-        // 1. Iniciar análisis
-        const { jobId } = await api.analyze(params.projectId!, params.videoUrl!);
+        const { analysisJobId } = await api.analyze(params.projectId!, params.videoUrl!);
+        if (cancelled) return;
 
-        // 2. Suscribirse al progreso vía SSE
-        unsubscribeRef.current = subscribeJobProgress(
-          jobId,
-          (data) => {
-            // Actualizar progreso según el estado
-            setProgress(data.progress);
+        // Poll job status every 2s (EventSource not available on React Native)
+        interval = setInterval(async () => {
+          try {
+            const job = await api.getJobStatus(analysisJobId);
+            if (cancelled) return;
 
-            if (data.progress >= 66) setStage(2);
-            else if (data.progress >= 33) setStage(1);
-          },
-          (result) => {
-            // Job completado: guardar clips y navegar
-            const data = result as any;
-            const clips = data?.segments || data?.returnvalue?.clips;
-            if (Array.isArray(clips)) {
-              useProjectStore.getState().setClips(clips);
+            setProgress(job.progress);
+            if (job.progress >= 66) setStage(2);
+            else if (job.progress >= 33) setStage(1);
+
+            if (job.status === 'completed' || job.status === 'COMPLETED') {
+              clearInterval(interval);
+              const returnvalue = job.returnvalue ?? job.result;
+              const clips = Array.isArray(returnvalue?.clips) ? returnvalue.clips : undefined;
+              if (clips) {
+                useProjectStore.getState().setClips(clips);
+              }
+              router.replace(`/project/${params.projectId}`);
+            } else if (job.status === 'failed' || job.status === 'FAILED') {
+              clearInterval(interval);
+              setError(job.failedReason || 'El análisis falló');
             }
-            router.replace(`/project/${params.projectId}`);
-          },
-          (err) => {
-            // Error en SSE
-            setError(err.message);
-          },
-        );
+          } catch {
+            // Ignore individual poll errors, keep trying
+          }
+        }, 2000);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Error al iniciar análisis');
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Error al iniciar análisis');
+        }
       }
     };
 
     runAnalysis();
 
     return () => {
-      unsubscribeRef.current?.();
+      cancelled = true;
+      if (interval) clearInterval(interval);
     };
   }, [params.projectId, params.videoUrl, router]);
 

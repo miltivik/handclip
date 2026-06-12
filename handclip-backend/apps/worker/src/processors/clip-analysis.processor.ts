@@ -164,23 +164,39 @@ export class ClipAnalysisProcessor extends WorkerHost {
     const { projectId, transcriptionSegments } = job.data;
     const supabase = this.supabaseService.getServiceRoleClient();
 
-    // Create job record in DB
-    const { data: jobRecord, error: jobCreateError } = await supabase
+    // Look up pre-created clip_analysis DB record (from enqueueAnalysis)
+    const { data: existingJob } = await supabase
       .from('jobs')
-      .insert({
-        project_id: projectId,
-        type: 'clip_analysis',
-        status: 'active',
-        progress: 10,
-        bullmq_id: job.id,
-      })
       .select('id')
+      .eq('project_id', projectId)
+      .eq('type', 'clip_analysis')
+      .eq('status', 'queued')
+      .order('created_at', { ascending: false })
+      .limit(1)
       .single();
 
-    if (jobCreateError) {
-      console.error(`[ClipAnalysis] Failed to create job record: ${jobCreateError.message}`);
+    let dbJobId: string | undefined = existingJob?.id;
+
+    if (dbJobId) {
+      await supabase
+        .from('jobs')
+        .update({ status: 'active', progress: 10, bullmq_id: job.id })
+        .eq('id', dbJobId);
+    } else {
+      // Fallback: create record if pre-created one doesn't exist
+      const { data: newJob } = await supabase
+        .from('jobs')
+        .insert({
+          project_id: projectId,
+          type: 'clip_analysis',
+          status: 'active',
+          progress: 10,
+          bullmq_id: job.id,
+        })
+        .select('id')
+        .single();
+      dbJobId = newJob?.id;
     }
-    const dbJobId = jobRecord?.id;
 
     await job.updateProgress(10);
     console.log(`[ClipAnalysis] Analyzing clips for project ${projectId}`);
@@ -220,19 +236,36 @@ export class ClipAnalysisProcessor extends WorkerHost {
     }
     await job.updateProgress(40);
 
-    // Call LLM with fallback
-    const MAX_RETRIES = 1;
+    // Call LLM with multi-provider retry (3 attempts)
+    const MAX_ATTEMPTS = 3;
     let lastError: Error | null = null;
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       try {
+        // Attempt 0: default prompt
+        // Attempt 1: strict prompt
+        // Attempt 2: strict prompt + force expensive provider first
+        if (attempt === 1) {
+          task.userPrompt = buildUserPrompt(transcriptionSegments) + '\n\n' + CLIP_ANALYSIS_STRICT_PROMPT;
+        }
+        if (attempt === 2) {
+          // Force Anthropic first (most capable for structured JSON)
+          providerManager.enableBYOK('anthropic', process.env.ANTHROPIC_API_KEY || '');
+          task.userPrompt = buildUserPrompt(transcriptionSegments) + '\n\n' + CLIP_ANALYSIS_STRICT_PROMPT;
+        }
+
         const result = await providerManager.callWithFallback(task);
+
+        // Reset BYOK after forced provider attempt
+        if (attempt === 2) {
+          providerManager.disableBYOK();
+        }
 
         if (dbJobId) {
           await supabase.from('jobs').update({ progress: 60 }).eq('id', dbJobId);
         }
         await job.updateProgress(60);
-        console.log(`[ClipAnalysis] Received response from ${result.provider} (${result.model})`);
+        console.log(`[ClipAnalysis] Received response from ${result.provider} (${result.model}) on attempt ${attempt + 1}`);
         console.log(
           `[ClipAnalysis] Usage: ${result.usage.inputTokens} input tokens, ${result.usage.outputTokens} output tokens`,
         );
@@ -269,20 +302,16 @@ export class ClipAnalysisProcessor extends WorkerHost {
           }
         }
 
-        // Sort by confidence score descending
         clips.sort((a, b) => (b.confidenceScore || 0) - (a.confidenceScore || 0));
-
-        // Mark project as ready
         await supabase.from('projects').update({ status: 'ready' }).eq('id', projectId);
 
-        // Mark job as completed
         if (dbJobId) {
           await supabase
             .from('jobs')
             .update({
               status: 'completed',
               progress: 100,
-              result: { clips_count: clips.length },
+              result: { clips_count: clips.length, provider: result.provider, attempts: attempt + 1 },
               updated_at: new Date().toISOString(),
             })
             .eq('id', dbJobId);
@@ -293,32 +322,69 @@ export class ClipAnalysisProcessor extends WorkerHost {
         return { clips };
       } catch (err: any) {
         lastError = err;
+        // Reset BYOK on failure
+        providerManager.disableBYOK();
+        console.warn(`[ClipAnalysis] Attempt ${attempt + 1}/${MAX_ATTEMPTS} failed: ${err.message}`);
 
-        if (attempt < MAX_RETRIES) {
-          console.warn(`[ClipAnalysis] Attempt ${attempt + 1} failed, retrying with stricter prompt...`);
-          task.userPrompt = buildUserPrompt(transcriptionSegments) + '\n\n' + CLIP_ANALYSIS_STRICT_PROMPT;
-          await job.updateProgress(45 + attempt * 10);
+        if (dbJobId) {
+          await supabase.from('jobs').update({ progress: 45 + attempt * 10 }).eq('id', dbJobId);
         }
+        await job.updateProgress(45 + attempt * 10);
       }
     }
 
-    // All retries failed
-    console.error(`[ClipAnalysis] All attempts failed for project ${projectId}:`, lastError?.message);
+    // All attempts failed — create a fallback clip from the longest segment
+    console.warn(`[ClipAnalysis] All ${MAX_ATTEMPTS} attempts failed. Creating fallback clip from longest segment.`);
+
+    const fallbackClips = this.createFallbackClip(projectId, transcriptionSegments);
+    await supabase.from('projects').update({ status: 'ready' }).eq('id', projectId);
 
     if (dbJobId) {
       await supabase
         .from('jobs')
         .update({
-          status: 'failed',
-          progress: 0,
-          result: { error: lastError?.message },
+          status: 'completed',
+          progress: 100,
+          result: { clips_count: fallbackClips.length, fallback: true, error: lastError?.message },
           updated_at: new Date().toISOString(),
         })
         .eq('id', dbJobId);
     }
+    await job.updateProgress(100);
 
-    await supabase.from('projects').update({ status: 'failed' }).eq('id', projectId);
+    return { clips: fallbackClips };
+  }
 
-    throw lastError || new Error('Clip analysis failed after all retries');
+  /**
+   * Creates a single fallback clip from the longest transcription segment.
+   * Used when all LLM attempts fail — ensures the user always gets at least one clip.
+   */
+  private createFallbackClip(
+    projectId: string,
+    segments: SubtitleSegment[],
+  ): ClipCandidate[] {
+    if (!segments || segments.length === 0) return [];
+
+    const longest = segments.reduce((longest, seg) =>
+      (seg.endTime - seg.startTime) > (longest.endTime - longest.startTime) ? seg : longest,
+    );
+
+    const duration = longest.endTime - longest.startTime;
+    console.log(
+      `[ClipAnalysis] Fallback clip from longest segment: ${longest.startTime}s–${longest.endTime}s (${duration.toFixed(1)}s)`,
+    );
+
+    return [{
+      id: `fallback-${projectId}`,
+      startTime: longest.startTime,
+      endTime: longest.endTime,
+      duration,
+      confidenceScore: 30,
+      reasons: ['fallback_longest_segment'],
+      suggestedCaption: longest.text.substring(0, 150),
+      transcriptSnippet: longest.text,
+      moodTags: [],
+      platformTargets: ['tiktok'],
+    }];
   }
 }

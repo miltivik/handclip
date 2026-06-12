@@ -1,7 +1,9 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
 import { Job, Queue } from 'bullmq';
 import { SubtitleSegment, SubtitleSegmentSchema } from '@handclip/shared';
 import { SupabaseService } from '../modules/supabase/supabase.service';
+import { validatePublicUrl } from '@handclip/shared';
+import { validateTempPath } from '../utils/validate-path';
 import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -26,7 +28,10 @@ interface TranscriptionJobData {
 export class TranscriptionProcessor extends WorkerHost {
   private openai: OpenAI;
 
-  constructor(private readonly supabaseService: SupabaseService) {
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    @InjectQueue('clip-analysis') private clipAnalysisQueue: Queue,
+  ) {
     super();
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
@@ -70,23 +75,44 @@ export class TranscriptionProcessor extends WorkerHost {
 
     try {
       // Step 1: Download video to temp file
+      let downloadUrl: string;
       if (videoUrl.startsWith('http')) {
-        const response = await fetch(videoUrl);
-        const buffer = Buffer.from(await response.arrayBuffer());
-        fs.writeFileSync(videoPath, buffer);
+        downloadUrl = await validatePublicUrl(videoUrl);
       } else {
-        fs.copyFileSync(videoUrl, videoPath);
+        downloadUrl = videoUrl; // local file path
       }
 
-      // Step 2: Extract audio with FFmpeg
+      if (downloadUrl.startsWith('http')) {
+        const response = await fetch(downloadUrl);
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.startsWith('video/') && !contentType.startsWith('audio/')) {
+          throw new Error(`Unexpected content type: ${contentType}. Expected video/audio.`);
+        }
+        const buffer = Buffer.from(await response.arrayBuffer());
+        fs.writeFileSync(videoPath, buffer);
+      }
+
+      // Step 2: Normalize video format (transcode exotic codecs to H.264/AAC)
+      if (dbJobId) {
+        await supabase.from('jobs').update({ progress: 15 }).eq('id', dbJobId);
+      }
+      await job.updateProgress(15);
+      console.log(`[Transcription] Checking video format for project ${projectId}`);
+
+      const normalizedPath = await this.normalizeVideoFormat(videoPath, projectId);
+      const sourcePath = normalizedPath || videoPath;
+
+      // Step 3: Extract audio with FFmpeg
       if (dbJobId) {
         await supabase.from('jobs').update({ progress: 20 }).eq('id', dbJobId);
       }
       await job.updateProgress(20);
       console.log(`[Transcription] Extracting audio for project ${projectId}`);
 
+      const safeVideoPath = validateTempPath(videoPath);
+      const safeAudioPath = validateTempPath(audioPath);
       await execAsync(
-        `ffmpeg -i "${videoPath}" -vn -acodec libmp3lame -ar 16000 -ab 64k -y "${audioPath}" 2>&1`
+        `ffmpeg -i "${safeVideoPath}" -vn -acodec libmp3lame -ar 16000 -ab 64k -y "${safeAudioPath}" 2>&1`
       );
 
       // Step 3: Call Whisper API with word-level timestamps
@@ -164,24 +190,34 @@ export class TranscriptionProcessor extends WorkerHost {
           })
           .eq('id', dbJobId);
       }
-      await job.updateProgress(100);
-      console.log(`[Transcription] Completed for project ${projectId}: ${segments.length} segments`);
-
-      // Step 5: Enqueue clip-analysis job
-      const clipQueue = new Queue('clip-analysis', {
-        connection: {
-          host: process.env.REDIS_HOST || 'localhost',
-          port: parseInt(process.env.REDIS_PORT || '6379', 10),
-        },
-      });
-
-      await clipQueue.add('analyze-clips', {
+      // Step 5: Enqueue clip-analysis job via injected queue (reuses BullMQ connection)
+      const analysisBullJob = await this.clipAnalysisQueue.add('analyze-clips', {
         projectId,
         videoUrl,
         transcriptionSegments: segments,
+      }, {
+        removeOnComplete: { count: 50 },
+        removeOnFail: { count: 20 },
       });
 
-      await clipQueue.close();
+      // Link BullMQ job ID to the pre-created clip_analysis DB record
+      const { data: existingAnalysis } = await supabase
+        .from('jobs')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('type', 'clip_analysis')
+        .eq('status', 'queued')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (existingAnalysis) {
+        await supabase
+          .from('jobs')
+          .update({ bullmq_id: analysisBullJob.id as string })
+          .eq('id', existingAnalysis.id);
+      }
+
       console.log(`[Transcription] Enqueued clip-analysis for project ${projectId}`);
 
       return { segments };
@@ -214,6 +250,60 @@ export class TranscriptionProcessor extends WorkerHost {
       try { fs.unlinkSync(audioPath); } catch {}
     }
   }
+
+  /**
+   * Detects video/audio codecs with ffprobe and transcodes to H.264/AAC if needed.
+   * Returns the path to the normalized file, or null if no normalization was needed.
+   */
+  private async normalizeVideoFormat(
+    inputPath: string,
+    projectId: string,
+  ): Promise<string | null> {
+    try {
+      const { stdout } = await execAsync(
+        `ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "${validateTempPath(inputPath)}"`,
+        { timeout: 15000 },
+      );
+      const videoCodec = stdout.trim();
+
+      let audioCodec = '';
+      try {
+        const { stdout: audioOut } = await execAsync(
+          `ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "${validateTempPath(inputPath)}"`,
+          { timeout: 10000 },
+        );
+        audioCodec = audioOut.trim();
+      } catch {
+        // No audio stream — that's fine
+        audioCodec = 'none';
+      }
+
+      const needsTranscode =
+        !['h264', 'avc1'].includes(videoCodec) ||
+        (audioCodec !== 'none' && !['aac', 'mp3'].includes(audioCodec));
+
+      if (!needsTranscode) {
+        console.log(`[Transcription] Video format OK: ${videoCodec}/${audioCodec}, skipping normalization`);
+        return null;
+      }
+
+      console.log(`[Transcription] Normalizing video: ${videoCodec}/${audioCodec} → H.264/AAC`);
+      const normalizedPath = path.join(os.tmpdir(), `${projectId}-normalized.mp4`);
+      validateTempPath(normalizedPath);
+
+      await execAsync(
+        `ffmpeg -i "${validateTempPath(inputPath)}" -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k -y "${normalizedPath}" 2>&1`,
+        { timeout: 300000 },
+      );
+
+      console.log(`[Transcription] Normalization complete: ${normalizedPath}`);
+      return normalizedPath;
+    } catch (err: any) {
+      console.warn(`[Transcription] Normalization probe/transcode failed: ${err.message}. Using original file.`);
+      return null;
+    }
+  }
+
   private async localTranscriptionFallback(
     audioPath: string,
     job: Job<TranscriptionJobData>,

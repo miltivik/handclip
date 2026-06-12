@@ -1,19 +1,14 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, OnModuleDestroy } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { createWriteStream, createReadStream, existsSync, unlinkSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
-
-export const ALLOWED_VIDEO_MIMETYPES = [
-  'video/mp4',
-  'video/quicktime',
-  'video/webm',
-  'video/x-m4v',
-  'video/x-matroska',
-];
-
-export const MAX_VIDEO_SIZE_BYTES = 500 * 1024 * 1024; // 500MB
+import {
+  ALLOWED_VIDEO_MIMETYPES,
+  MAX_VIDEO_SIZE_BYTES,
+  CHUNK_UPLOAD_SIZE_BYTES,
+} from '@handclip/shared';
 
 interface UploadMetadata {
   userId: string;
@@ -27,10 +22,14 @@ interface UploadMetadata {
 }
 
 @Injectable()
-export class UploadsService {
+export class UploadsService implements OnModuleDestroy {
   private uploads = new Map<string, UploadMetadata>();
+  private uploadTimestamps = new Map<string, number>();
+  private cleanupInterval: ReturnType<typeof setInterval>;
 
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(private readonly supabaseService: SupabaseService) {
+    this.cleanupInterval = setInterval(() => this.cleanExpiredUploads(), 5 * 60 * 1000);
+  }
 
   async initUpload(
     userId: string,
@@ -38,6 +37,8 @@ export class UploadsService {
     fileSize: number,
     mimeType: string,
   ): Promise<{ uploadId: string }> {
+    this.cleanExpiredUploads();
+
     if (!ALLOWED_VIDEO_MIMETYPES.includes(mimeType)) {
       throw new BadRequestException(
         `Invalid file type. Allowed: ${ALLOWED_VIDEO_MIMETYPES.join(', ')}`,
@@ -56,9 +57,7 @@ export class UploadsService {
 
     mkdirSync(tempDir, { recursive: true });
 
-    // Estimate total chunks (assuming 5MB chunks)
-    const chunkSize = 5 * 1024 * 1024;
-    const totalChunks = Math.ceil(fileSize / chunkSize);
+    const totalChunks = Math.ceil(fileSize / CHUNK_UPLOAD_SIZE_BYTES);
 
     this.uploads.set(uploadId, {
       userId,
@@ -70,6 +69,7 @@ export class UploadsService {
       chunks: new Map(),
       tempDir,
     });
+    this.uploadTimestamps.set(uploadId, Date.now());
 
     return { uploadId };
   }
@@ -79,9 +79,14 @@ export class UploadsService {
     chunkIndex: number,
     chunk: Buffer,
   ): Promise<{ received: number; total: number }> {
+    this.cleanExpiredUploads();
     const metadata = this.uploads.get(uploadId);
     if (!metadata) {
       throw new BadRequestException('Upload not found or expired');
+    }
+
+    if (chunkIndex < 0 || chunkIndex >= metadata.totalChunks) {
+      throw new BadRequestException(`Invalid chunk index: ${chunkIndex}. Expected 0-${metadata.totalChunks - 1}`);
     }
 
     const chunkPath = join(metadata.tempDir, `chunk-${chunkIndex}`);
@@ -97,6 +102,7 @@ export class UploadsService {
   async completeUpload(
     uploadId: string,
     userId: string,
+    token: string,
     checksum?: string,
   ): Promise<{ videoUrl: string }> {
     const metadata = this.uploads.get(uploadId);
@@ -118,8 +124,7 @@ export class UploadsService {
       }
     }
 
-    // Upload to Supabase Storage
-    const videoUrl = await this.uploadToSupabase(outputPath, uploadId, metadata.extension);
+    const videoUrl = await this.uploadToSupabase(outputPath, uploadId, metadata.extension, token);
 
     // Cleanup
     this.cleanup(metadata);
@@ -199,8 +204,9 @@ export class UploadsService {
     filePath: string,
     uploadId: string,
     extension: string,
+    token: string,
   ): Promise<string> {
-    const client = this.supabaseService.getServiceRoleClient();
+    const client = this.supabaseService.getClientWithAuth(token);
     const bucket = 'source-videos';
     const destinationPath = `${uploadId}/input.${extension}`;
 
@@ -214,7 +220,8 @@ export class UploadsService {
       });
 
     if (error) {
-      throw new BadRequestException(`Failed to upload to storage: ${error.message}`);
+      console.error('Failed to upload file to storage:', error);
+      throw new BadRequestException('Failed to upload file to storage');
     }
 
     const { data: urlData } = client.storage.from(bucket).getPublicUrl(destinationPath);
@@ -248,9 +255,32 @@ export class UploadsService {
       for (const [key, val] of this.uploads.entries()) {
         if (val.tempDir === metadata.tempDir) {
           this.uploads.delete(key);
+          this.uploadTimestamps.delete(key);
           break;
         }
       }
     }
   }
+
+  private cleanExpiredUploads(): void {
+    const now = Date.now();
+    const TTL = 30 * 60 * 1000; // 30 minutes
+    for (const [uploadId, timestamp] of this.uploadTimestamps.entries()) {
+      if (now - timestamp > TTL) {
+        const metadata = this.uploads.get(uploadId);
+        if (metadata) {
+          this.cleanup(metadata);
+        } else {
+          this.uploadTimestamps.delete(uploadId);
+        }
+      }
+    }
+  }
+
+  onModuleDestroy(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
+  }
+
 }

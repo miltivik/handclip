@@ -1,14 +1,34 @@
 import { Injectable } from '@nestjs/common';
+import { readFileSync } from 'fs';
 import { SupabaseService } from '../supabase/supabase.service';
 
 export interface Project {
   id: string;
   name: string;
+  title: string;
   description?: string;
   userId: string;
   sourceVideoUrl?: string;
+  sourceDuration?: number;
+  status: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// DB row shape (snake_case) → Project interface (camelCase)
+function mapProject(row: Record<string, unknown>): Project {
+  return {
+    id: row.id as string,
+    name: (row.title ?? row.name) as string,
+    title: (row.title ?? row.name) as string,
+    description: row.description as string | undefined,
+    userId: row.user_id as string,
+    sourceVideoUrl: row.source_video_url as string | undefined,
+    sourceDuration: row.source_duration as number | undefined,
+    status: row.status as string,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  };
 }
 
 export const ALLOWED_VIDEO_MIMETYPES = [
@@ -26,22 +46,24 @@ export const MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024;
 export class ProjectsService {
   constructor(private readonly supabaseService: SupabaseService) {}
 
-  async create(params: {
-    name: string;
-    description?: string;
-    sourceVideoUrl?: string;
-    duration?: number;
-    width?: number;
-    height?: number;
-  }): Promise<Project> {
+  async create(
+    userId: string,
+    params: {
+      name: string;
+      description?: string;
+      sourceVideoUrl?: string;
+      duration?: number;
+      width?: number;
+      height?: number;
+    },
+  ): Promise<Project> {
     const client = this.supabaseService.getClient();
-    const user = await this.getCurrentUser();
 
     const { data, error } = await client
       .from('projects')
       .insert({
         title: params.name,
-        user_id: user?.id || 'anonymous',
+        user_id: userId,
         source_video_url: params.sourceVideoUrl || null,
         source_duration: params.duration || null,
         metadata: params.width && params.height
@@ -51,54 +73,58 @@ export class ProjectsService {
       })
       .select()
       .single();
-
     if (error) {
-      throw new Error(error.message);
+      console.error('Failed to save project:', error);
+      throw new Error('Failed to save project');
     }
 
-    return data as Project;
+    return mapProject(data as Record<string, unknown>);
   }
 
-  async findAll(): Promise<Project[]> {
+  async findAll(userId: string): Promise<Project[]> {
     const client = this.supabaseService.getClient();
-    const user = await this.getCurrentUser();
 
     const { data, error } = await client
       .from('projects')
       .select('*')
-      .eq('user_id', user?.id || 'anonymous')
+      .eq('user_id', userId)
       .order('created_at', { ascending: false });
-
     if (error) {
-      throw new Error(error.message);
+      console.error('Failed to fetch projects:', error);
+      throw new Error('Failed to fetch projects');
     }
 
-    return (data || []) as Project[];
+    return (data || []).map((row) => mapProject(row as Record<string, unknown>));
   }
 
-  async findOne(id: string): Promise<Project> {
+  async findOne(id: string, userId: string): Promise<Project> {
     const client = this.supabaseService.getClient();
 
     const { data, error } = await client
       .from('projects')
       .select('*')
       .eq('id', id)
+      .eq('user_id', userId)
       .single();
-
     if (error) {
-      throw new Error(error.message);
+      console.error('Failed to retrieve project:', error);
+      throw new Error('Failed to retrieve project');
     }
 
-    return data as Project;
+    return mapProject(data as Record<string, unknown>);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, userId: string): Promise<void> {
     const client = this.supabaseService.getClient();
 
-    const { error } = await client.from('projects').delete().eq('id', id);
-
+    const { error } = await client
+      .from('projects')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId);
     if (error) {
-      throw new Error(error.message);
+      console.error('Failed to delete project:', error);
+      throw new Error('Failed to delete project');
     }
   }
 
@@ -130,13 +156,14 @@ export class ProjectsService {
     // Subir a Supabase Storage
     const { data, error } = await client.storage
       .from('source-videos')
-      .upload(storagePath, file.buffer, {
+      .upload(storagePath, readFileSync(file.path), {
         contentType: file.mimetype,
         upsert: false,
       });
 
     if (error) {
-      throw new Error(`Error al subir el video: ${error.message}`);
+      console.error('Error al subir el video:', error);
+      throw new Error('Error al subir el video');
     }
 
     // Obtener URL pública
@@ -147,25 +174,21 @@ export class ProjectsService {
     return { videoUrl: urlData.publicUrl };
   }
 
-  async getSignedVideoUrl(projectId: string): Promise<string> {
+  async getSignedVideoUrl(projectId: string, userId: string): Promise<string> {
     const client = this.supabaseService.getClient();
-    const user = await this.getCurrentUser();
-
-    if (!user) {
-      throw new Error('No se pudo identificar al usuario');
-    }
 
     // Obtener info del proyecto para construir la ruta
-    const project = await this.findOne(projectId);
+    const project = await this.findOne(projectId, userId);
     const extension = 'mp4'; // extensión por defecto, se puede mejorar
-    const storagePath = `${project.userId || user.id}/${projectId}/input.${extension}`;
+    const storagePath = `${project.userId || userId}/${projectId}/input.${extension}`;
 
     const { data, error } = await client.storage
       .from('source-videos')
       .createSignedUrl(storagePath, 3600); // 1 hora
 
     if (error) {
-      throw new Error(`Error al generar URL firmada: ${error.message}`);
+      console.error('Error al generar URL firmada:', error);
+      throw new Error('Error al generar URL firmada');
     }
 
     if (!data.signedUrl) {
@@ -178,12 +201,10 @@ export class ProjectsService {
   async uploadAndCreateProject(
     file: Express.Multer.File,
     name: string,
+    userId: string,
   ): Promise<{ projectId: string; videoUrl: string }> {
-    const user = await this.getCurrentUser();
-    const userId = user?.id || 'anonymous';
-
     // Crear proyecto primero para obtener el ID
-    const project = await this.create({ name });
+    const project = await this.create(userId, { name });
 
     // Subir video
     const { videoUrl } = await this.uploadVideo(file, userId, project.id);
@@ -201,21 +222,12 @@ export class ProjectsService {
     };
     return extensionMap[mimetype] || 'mp4';
   }
-  async getVideoUrl(projectId: string): Promise<string> {
-    const project = await this.findOne(projectId);
+
+  async getVideoUrl(projectId: string, userId: string): Promise<string> {
+    const project = await this.findOne(projectId, userId);
     if (!project.sourceVideoUrl) {
       throw new Error('Video no encontrado para este proyecto');
     }
-    return this.getSignedVideoUrl(projectId);
-  }
-
-  async getCurrentUser(): Promise<{ id: string } | null> {
-    try {
-      const client = this.supabaseService.getClient();
-      const { data } = await client.auth.getUser();
-      return data.user;
-    } catch {
-      return null;
-    }
+    return this.getSignedVideoUrl(projectId, userId);
   }
 }

@@ -33,39 +33,42 @@ export class AllProvidersFailed extends Error {
   }
 }
 
-const DEFAULT_PROVIDERS: ProviderConfig[] = [
-  {
-    name: 'openai',
-    apiKey: process.env.OPENAI_API_KEY || '',
-    defaultModel: 'gpt-4o-mini',
-    costPer1MInput: 0.15,
-    costPer1MOutput: 0.60,
-  },
-  {
-    name: 'anthropic',
-    apiKey: process.env.ANTHROPIC_API_KEY || '',
-    defaultModel: 'claude-3-haiku-20240307',
-    costPer1MInput: 0.125,
-    costPer1MOutput: 1.25,
-  },
-  {
-    name: 'openrouter',
-    apiKey: process.env.OPENROUTER_API_KEY || '',
-    baseURL: 'https://openrouter.ai/api/v1',
-    defaultModel: 'openai/gpt-4o-mini',
-    costPer1MInput: 0.15,
-    costPer1MOutput: 0.60,
-  },
-];
+
 
 export class ProviderManager {
   private rateLimits = new Map<string, { count: number; resetAt: number }>();
   private readonly MAX_RPM = 50;
-  private providers: ProviderConfig[];
+  private providers: ProviderConfig[] = [];
   private byokConfig: { enabled: boolean; provider: ProviderName; apiKey: string } | null = null;
 
-  constructor(customProviders?: ProviderConfig[]) {
-    this.providers = customProviders || DEFAULT_PROVIDERS;
+  constructor() {}
+
+  private ensureProviders(): void {
+    if (this.providers.length > 0) return;
+    this.providers = [
+      {
+        name: 'openai',
+        apiKey: process.env.OPENAI_API_KEY || '',
+        defaultModel: 'gpt-4o-mini',
+        costPer1MInput: 0.15,
+        costPer1MOutput: 0.60,
+      },
+      {
+        name: 'anthropic',
+        apiKey: process.env.ANTHROPIC_API_KEY || '',
+        defaultModel: 'claude-3-haiku-20240307',
+        costPer1MInput: 0.125,
+        costPer1MOutput: 1.25,
+      },
+      {
+        name: 'openrouter',
+        apiKey: process.env.OPENROUTER_API_KEY || '',
+        baseURL: 'https://openrouter.ai/api/v1',
+        defaultModel: 'openai/gpt-4o-mini',
+        costPer1MInput: 0.15,
+        costPer1MOutput: 0.60,
+      },
+    ];
   }
 
   enableBYOK(provider: ProviderName, apiKey: string) {
@@ -79,6 +82,7 @@ export class ProviderManager {
   }
 
   async callWithFallback(task: StageTask): Promise<ProviderResult> {
+    this.ensureProviders();
     const ranked = this.rankProviders(task.stage);
 
     for (const provider of ranked) {

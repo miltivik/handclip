@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Share } from 'react-native';
 import { PRESETS } from '../../../lib/constants';
 import { api } from '../../../services/api';
 
@@ -13,25 +13,32 @@ const PRESET_LABELS: Record<PresetKey, string> = {
 };
 
 export default function ExportScreen() {
-  const { id, jobId, preset } = useLocalSearchParams<{ id: string; jobId: string; preset: string }>();
+  const { id, jobId, exportId, preset } = useLocalSearchParams<{
+    id: string;
+    jobId: string;
+    exportId: string;
+    preset: string;
+  }>();
   const router = useRouter();
   const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState<'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'>('PENDING');
+  const [status, setStatus] = useState<'queued' | 'rendering' | 'completed' | 'failed'>('queued');
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const pollId = exportId || jobId;
+
   useEffect(() => {
-    if (!jobId || !id) return;
+    if (!pollId || !id) return;
 
     const poll = async () => {
       try {
-        const result = await api.getExportJob(id, jobId);
+        const result = await api.getExportJob(pollId);
         setProgress(result.progress);
         setStatus(result.status as typeof status);
 
-        if (result.status === 'COMPLETED' && result.result?.outputUrl) {
-          setOutputUrl(result.result.outputUrl);
-        } else if (result.status === 'FAILED') {
+        if (result.status === 'completed' && result.outputUrl) {
+          setOutputUrl(result.outputUrl);
+        } else if (result.status === 'failed') {
           setError('La exportación falló. Intenta de nuevo.');
         }
       } catch (err) {
@@ -41,25 +48,24 @@ export default function ExportScreen() {
 
     // Poll every 2 seconds
     const interval = setInterval(poll, 2000);
-    // Initial poll
     poll();
 
     return () => clearInterval(interval);
-  }, [jobId, id]);
+  }, [pollId, id]);
 
   const handleDownload = async () => {
     if (outputUrl) {
       try {
-        await Linking.openURL(outputUrl);
+        await Share.share({ url: outputUrl, message: 'Mira mi clip creado con HandClip' });
       } catch {
-        setError('No se pudo abrir el archivo');
+        setError('No se pudo compartir el archivo');
       }
     }
   };
 
-  const isComplete = status === 'COMPLETED';
-  const isFailed = status === 'FAILED';
-  const isProcessing = status === 'PENDING' || status === 'PROCESSING';
+  const isComplete = status === 'completed';
+  const isFailed = status === 'failed';
+  const isProcessing = status === 'queued' || status === 'rendering';
 
   return (
     <View style={styles.container}>
@@ -114,7 +120,7 @@ export default function ExportScreen() {
             <View style={[styles.progressBar, { width: `${progress}%` }]} />
           </View>
           <Text accessibilityLabel={`Exportando clip, ${progress}%`} style={styles.progressText}>
-            {status === 'PENDING' ? 'Iniciando...' : `Renderizando... ${progress}%`}
+            {status === 'queued' ? 'En cola...' : `Renderizando... ${progress}%`}
           </Text>
         </View>
       )}

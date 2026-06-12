@@ -9,8 +9,15 @@ import {
   UploadedFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ProjectsService } from './projects.service';
+import { diskStorage } from 'multer';
+import * as os from 'os';
+import { unlinkSync } from 'fs';
+import { CurrentUser } from '../../decorators/current-user.decorator';
+import { CurrentToken } from '../../decorators/current-token.decorator';
 import { JobsService } from '../jobs/jobs.service';
+import { ProjectsService } from './projects.service';
+import { ZodValidationPipe } from '../../pipes/zod-validation.pipe';
+import { AnalyzeProjectDtoSchema, AnalyzeProjectDto } from '@handclip/shared';
 
 @Controller('projects')
 export class ProjectsController {
@@ -20,20 +27,28 @@ export class ProjectsController {
   ) {}
 
   @Post()
-  async create(@Body() body: {
-    name: string;
-    description?: string;
-    sourceVideoUrl?: string;
-    duration?: number;
-    width?: number;
-    height?: number;
-  }) {
-    return this.projectsService.create(body);
+  async create(
+    @Body() body: {
+      name: string;
+      description?: string;
+      sourceVideoUrl?: string;
+      duration?: number;
+      width?: number;
+      height?: number;
+    },
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.projectsService.create(user.id, body);
   }
 
   @Post('upload')
   @UseInterceptors(
     FileInterceptor('video', {
+      storage: diskStorage({
+        destination: os.tmpdir(),
+        filename: (req, file, cb) =>
+          cb(null, `${Date.now()}-${file.originalname}`),
+      }),
       limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB
       fileFilter: (req, file, cb) => {
         const allowed = [
@@ -57,48 +72,70 @@ export class ProjectsController {
   async uploadVideo(
     @UploadedFile() file: Express.Multer.File,
     @Body('name') name: string,
+    @CurrentUser() user: { id: string },
   ) {
-    return this.projectsService.uploadAndCreateProject(file, name);
+    const result = await this.projectsService.uploadAndCreateProject(file, name, user.id);
+    // Clean up temp file written by multer disk storage
+    if (file.path) {
+      try {
+        unlinkSync(file.path);
+      } catch {
+        // Best-effort cleanup; ignore errors
+      }
+    }
+    return result;
   }
 
   @Get(':id/video-url')
-  async getVideoUrl(@Param('id') id: string) {
-    const signedUrl = await this.projectsService.getSignedVideoUrl(id);
+  async getVideoUrl(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    const signedUrl = await this.projectsService.getSignedVideoUrl(id, user.id);
     return { videoUrl: signedUrl };
   }
 
   @Get()
-  async findAll() {
-    return this.projectsService.findAll();
+  async findAll(@CurrentUser() user: { id: string }) {
+    return this.projectsService.findAll(user.id);
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return this.projectsService.findOne(id);
+  async findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.projectsService.findOne(id, user.id);
   }
 
   @Delete(':id')
-  async remove(@Param('id') id: string) {
-    return this.projectsService.remove(id);
+  async remove(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    await this.projectsService.remove(id, user.id);
+    return { success: true };
   }
-
   @Post(':id/analyze')
   async analyze(
     @Param('id') id: string,
-    @Body() body: { videoUrl: string },
+    @Body(new ZodValidationPipe(AnalyzeProjectDtoSchema)) body: AnalyzeProjectDto,
+    @CurrentUser() user: { id: string },
+    @CurrentToken() token: string,
   ) {
-    const result = await this.jobsService.enqueueAnalysis(id, body.videoUrl);
+    const result = await this.jobsService.enqueueAnalysis(token, id, body.videoUrl);
     return { jobId: result.jobId };
   }
-
   @Post(':id/export')
   async exportClip(
     @Param('id') id: string,
+    @CurrentUser() user: { id: string },
+    @CurrentToken() token: string,
     @Body() body: {
       clipId: string;
       trimStart: number;
       trimEnd: number;
-      subtitles: any[];
+      subtitles: unknown[];
       musicUrl?: string;
       musicVolume?: number;
       musicFadeIn?: number;
@@ -106,12 +143,11 @@ export class ProjectsController {
       preset: 'tiktok' | 'reels' | 'shorts' | 'draft' | 'hq';
     },
   ) {
-    const user = await this.projectsService.getCurrentUser();
-    const videoUrl = await this.projectsService.getVideoUrl(id);
+    const videoUrl = await this.projectsService.getVideoUrl(id, user.id);
 
-    const result = await this.jobsService.enqueueRender({
+    const result = await this.jobsService.enqueueRender(token, {
       projectId: id,
-      userId: user?.id || 'anonymous',
+      userId: user.id,
       videoUrl,
       trimStart: body.trimStart,
       trimEnd: body.trimEnd,
@@ -131,7 +167,9 @@ export class ProjectsController {
   async getExportJobStatus(
     @Param('id') id: string,
     @Param('jobId') jobId: string,
+    @CurrentUser() user: { id: string },
+    @CurrentToken() token: string,
   ) {
-    return this.jobsService.getJob(jobId);
+    return this.jobsService.getJob(jobId, token);
   }
 }

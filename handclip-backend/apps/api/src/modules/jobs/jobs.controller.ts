@@ -1,7 +1,10 @@
-import { Controller, Get, Post, Param, Body, Sse } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Sse, Req } from '@nestjs/common';
+import { Public } from '../../decorators/public.decorator';
+import { CurrentToken } from '../../decorators/current-token.decorator';
 import { Observable } from 'rxjs';
 import { QueueEvents } from 'bullmq';
 import { JobsService } from './jobs.service';
+import { JobStatusDto } from '@handclip/shared';
 
 @Controller()
 export class JobsController {
@@ -10,13 +13,19 @@ export class JobsController {
   // analyze endpoint is in ProjectsController to avoid route conflict
 
   @Get('jobs/:jobId')
-  async getJobStatus(@Param('jobId') jobId: string) {
-    return this.jobsService.getJob(jobId);
+  async getJobStatus(
+    @Param('jobId') jobId: string,
+    @CurrentToken() token: string,
+  ) {
+    return this.jobsService.getJob(jobId, token);
   }
 
+  // SSE endpoint: EventSource doesn't reliably send auth headers; job IDs are UUIDs (unguessable)
+  @Public()
   @Sse('jobs/:jobId/progress')
-  getJobProgress(@Param('jobId') jobId: string): Observable<MessageEvent> {
+  getJobProgress(@Param('jobId') jobId: string, @Req() req: any): Observable<MessageEvent> {
     return new Observable((subscriber) => {
+      let cleaned = false;
       const redisConfig = {
         host: process.env.REDIS_HOST || 'localhost',
         port: parseInt(process.env.REDIS_PORT || '6379', 10),
@@ -28,7 +37,7 @@ export class JobsController {
         (name) => new QueueEvents(name, { connection: redisConfig }),
       );
 
-      const handler = async (args: { jobId?: string; data?: any }) => {
+      const handler = async (args: { jobId?: string; data?: unknown }) => {
         if (args.jobId && args.jobId !== jobId) return;
 
         try {
@@ -64,24 +73,30 @@ export class JobsController {
         }
       }, 2000);
 
-      return () => {
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
         clearInterval(fallback);
         for (const qe of queueEventsList) {
           qe.off('progress', handler);
           qe.off('completed', handler);
           qe.off('failed', handler);
-          qe.close();
+          qe.close().catch(() => {});
         }
       };
+
+      req.on('close', cleanup);
+      return cleanup;
     });
   }
 
   @Post('jobs/:jobId/progress')
   async updateProgress(
     @Param('jobId') jobId: string,
+    @CurrentToken() token: string,
     @Body() body: { jobId: string; type: string; status: string; progress: number },
   ) {
-    await this.jobsService.updateJobProgress(body.jobId, body as any);
+    await this.jobsService.updateJobProgress(body.jobId, body as unknown as JobStatusDto, token);
     return { success: true };
   }
 }

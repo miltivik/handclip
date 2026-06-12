@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { JobStatusDto } from '@handclip/shared';
+import { JobStatusDto, ExportPreset } from '@handclip/shared';
 import { SupabaseService } from '../supabase/supabase.service';
 
 interface AnalysisJob {
@@ -33,7 +33,7 @@ export class JobsService {
     private supabaseService: SupabaseService,
   ) {}
 
-  async enqueueRender(data: {
+  async enqueueRender(token: string, data: {
     projectId: string;
     userId: string;
     videoUrl: string;
@@ -44,15 +44,35 @@ export class JobsService {
     musicVolume?: number;
     musicFadeIn?: number;
     musicFadeOut?: number;
-    preset: 'tiktok' | 'reels' | 'shorts' | 'draft' | 'hq';
+    preset: ExportPreset;
     clipId?: string;
   }) {
+    const supabase = this.supabaseService.getClientWithAuth(token);
+
+    // Pre-create export record
+    const { data: exportRow, error: exportError } = await supabase
+      .from('exports')
+      .insert({
+        project_id: data.projectId,
+        clip_id: data.clipId || null,
+        preset: data.preset,
+        status: 'queued',
+      })
+      .select('id')
+      .single();
+
+    if (exportError || !exportRow) {
+      console.error('Failed to create export record:', exportError);
+      throw new Error('Failed to create export record');
+    }
+
     const job = await this.renderQueue.add('render-video', data, {
       attempts: 2,
       backoff: { type: 'exponential', delay: 5000 },
+      removeOnComplete: { count: 50 },
+      removeOnFail: { count: 20 },
     });
 
-    const supabase = this.supabaseService.getServiceRoleClient();
     const { data: jobsRow, error } = await supabase
       .from('jobs')
       .insert({
@@ -66,27 +86,38 @@ export class JobsService {
       .single();
 
     if (error || !jobsRow) {
-      throw new Error(`Failed to insert render job into DB: ${error?.message}`);
+      console.error('Failed to insert render job:', error);
+      throw new Error('Failed to create render job');
     }
 
-    return { jobId: jobsRow.id };
+    return { jobId: jobsRow.id, exportId: exportRow.id };
   }
 
-  async enqueueAnalysis(projectId: string, videoUrl: string) {
+  /**
+   * Enqueues the full clip-finding pipeline:
+   * 1. Transcription job → extracts audio, calls Whisper, persists subtitles
+   * 2. Clip-analysis job → auto-enqueued by transcription processor upon completion
+   *
+   * Returns both job IDs so the frontend can track pipeline progress.
+   * Poll `GET /jobs/:analysisJobId` to know when clips are ready.
+   */
+  async enqueueAnalysis(token: string, projectId: string, videoUrl: string) {
+    const supabase = this.supabaseService.getClientWithAuth(token);
+
+    // Enqueue transcription
     const transcriptionJob = await this.transcriptionQueue.add(
       'transcribe',
       { projectId, videoUrl } as AnalysisJob,
       {
         attempts: 3,
-        backoff: {
-          type: 'exponential',
-          delay: 1000,
-        },
+        backoff: { type: 'exponential', delay: 1000 },
+        removeOnComplete: { count: 100 },
+        removeOnFail: { count: 50 },
       },
     );
 
-    const supabase = this.supabaseService.getServiceRoleClient();
-    const { data: jobsRow, error } = await supabase
+    // Pre-create transcription DB record
+    const { data: transRow, error: transError } = await supabase
       .from('jobs')
       .insert({
         project_id: projectId,
@@ -95,21 +126,43 @@ export class JobsService {
         progress: 0,
         bullmq_id: transcriptionJob.id as string,
       })
-      .select()
+      .select('id')
       .single();
 
-    if (error || !jobsRow) {
-      throw new Error(`Failed to insert analysis job into DB: ${error?.message}`);
+    if (transError || !transRow) {
+      console.error('Failed to create transcription job:', transError);
+      throw new Error('Failed to create transcription job');
+    }
+
+    // Pre-create clip-analysis DB record (status: queued until transcription finishes)
+    const { data: analysisRow, error: analysisError } = await supabase
+      .from('jobs')
+      .insert({
+        project_id: projectId,
+        type: 'clip_analysis',
+        status: 'queued',
+        progress: 0,
+        bullmq_id: null, // assigned when transcription enqueues it
+      })
+      .select('id')
+      .single();
+
+    if (analysisError || !analysisRow) {
+      console.error('Failed to create clip-analysis job:', analysisError);
+      throw new Error('Failed to create clip-analysis job');
     }
 
     return {
-      jobId: jobsRow.id,
-      message: 'Transcription job queued. Clip analysis will start automatically.',
+      transcriptionJobId: transRow.id,
+      analysisJobId: analysisRow.id,
+      message: 'Pipeline started: transcription → clip-analysis.',
     };
   }
 
-  async getJob(jobId: string): Promise<JobStatusDto> {
-    const supabase = this.supabaseService.getServiceRoleClient();
+  async getJob(jobId: string, token?: string): Promise<JobStatusDto> {
+    const supabase = token
+      ? this.supabaseService.getClientWithAuth(token)
+      : this.supabaseService.getClient();
     const { data: row, error } = await supabase
       .from('jobs')
       .select('*')
@@ -166,14 +219,14 @@ export class JobsService {
       status: 'QUEUED',
       progress: 0,
     };
-  }
-
-  async updateJobProgress(jobId: string, status: JobStatusDto): Promise<void> {
+  async updateJobProgress(jobId: string, status: JobStatusDto, token?: string): Promise<void> {
     // Write-through cache
     this.progressCache.set(jobId, status);
 
     // Update DB
-    const supabase = this.supabaseService.getServiceRoleClient();
+    const supabase = token
+      ? this.supabaseService.getClientWithAuth(token)
+      : this.supabaseService.getClient();
     const updates: Partial<{
       status: string;
       progress: number;

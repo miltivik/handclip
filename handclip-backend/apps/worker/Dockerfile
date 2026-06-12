@@ -33,4 +33,6 @@ WORKDIR /app
 COPY --from=build /app/apps/worker/dist ./apps/worker/dist
 COPY --from=build /app/node_modules ./node_modules
 
+USER node
+
 CMD ["node", "apps/worker/dist/main"]

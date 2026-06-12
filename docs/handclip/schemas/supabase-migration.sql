@@ -169,5 +169,45 @@ insert into storage.buckets (id, name, public) values ('exports', 'exports', fal
 create policy "Users can read own exports" on storage.objects
   for select using (bucket_id = 'exports' and auth.uid()::text = (storage.foldername(name))[1]);
 
--- Bucket: thumbnails (público)
-insert into storage.buckets (id, name, public) values ('thumbnails', 'thumbnails', true);
+-- Bucket: thumbnails (acceso vía signed URL, no listado público)
+insert into storage.buckets (id, name, public) values ('thumbnails', 'thumbnails', false);
+create policy "Users can manage own thumbnails" on storage.objects
+  for all using (bucket_id = 'thumbnails' and auth.uid()::text = (storage.foldername(name))[1]);
+create policy "Users can view thumbnails via signed URL" on storage.objects
+  for select using (bucket_id = 'thumbnails');
+
+-- 7. ATOMIC EXPORT COUNTER (evita race condition)
+create or replace function increment_export_count(user_id uuid)
+returns table(allowed boolean, count integer)
+language plpgsql
+set search_path = ''
+as $$
+declare
+  current_count integer;
+  last_reset timestamptz;
+  now_ts timestamptz := now();
+begin
+  select exports_this_month, last_export_reset_at
+  into current_count, last_reset
+  from public.profiles
+  where id = user_id
+  for update;
+
+  -- Reset on new month
+  if last_reset is null
+     or extract(month from last_reset) != extract(month from now_ts)
+     or extract(year from last_reset) != extract(year from now_ts) then
+    current_count := 0;
+  end if;
+
+  if current_count < 3 then
+    update public.profiles
+    set exports_this_month = current_count + 1,
+        last_export_reset_at = now_ts
+    where id = user_id;
+    return query select true, current_count + 1;
+  else
+    return query select false, current_count;
+  end if;
+end;
+$$;

@@ -76,9 +76,15 @@ export default function EditScreen() {
     if (!id || !clipId) return;
 
     try {
-      const result = await api.createExportJob(id, clipId, preset);
+      const result = await api.createExportJob(id, {
+        clipId,
+        trimStart,
+        trimEnd,
+        subtitles: subtitles.length > 0 ? subtitles : projectSubtitles,
+        preset,
+      });
       if (result.jobId) {
-        router.push(`/project/${id}/export?jobId=${result.jobId}&preset=${preset}`);
+        router.push(`/project/${id}/export?jobId=${result.jobId}&exportId=${result.exportId}&preset=${preset}`);
       }
     } catch (err) {
       Alert.alert('Error', err instanceof Error ? err.message : 'No se pudo iniciar la exportación');
@@ -200,7 +206,7 @@ export default function EditScreen() {
 
       <View style={styles.timelineContainer}>
         <Timeline
-          duration={duration || currentProject?.duration || 0}
+          duration={duration || currentProject?.sourceDuration || 0}
           trimStart={trimStart}
           trimEnd={trimEnd}
           onTrimStartChange={setTrimStart}

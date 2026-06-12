@@ -25,18 +25,17 @@ export class SupabaseService {
     return this.client;
   }
 
-  getServiceRoleClient(): SupabaseClient {
+  getClientWithAuth(jwt: string): SupabaseClient {
     const supabaseUrl = this.configService.get<string>('SUPABASE_URL');
-    const serviceRoleKey = this.configService.get<string>('SUPABASE_SERVICE_ROLE_KEY');
+    const anonKey = this.configService.get<string>('SUPABASE_ANON_KEY');
 
-    if (!supabaseUrl || !serviceRoleKey) {
-      throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be defined');
+    if (!supabaseUrl || !anonKey) {
+      throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY must be defined');
     }
 
-    return createClient(supabaseUrl, serviceRoleKey, {
-      auth: {
-        persistSession: false,
-      },
+    return createClient(supabaseUrl, anonKey, {
+      auth: { persistSession: false },
+      global: { headers: { Authorization: `Bearer ${jwt}` } },
     });
   }
 }

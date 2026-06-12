@@ -6,48 +6,62 @@ const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
 
 export interface Project {
   id: string;
-  user_id: string;
   name: string;
-  video_url: string;
-  thumbnail_url: string | null;
-  duration: number | null;
-  created_at: string;
-  updated_at: string;
+  title?: string;
+  description?: string;
+  userId: string;
+  sourceVideoUrl?: string;
+  sourceDuration?: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ClipCandidate {
   id: string;
-  project_id: string;
-  start_time: number;
-  end_time: number;
-  score: number;
-  thumbnail_url: string | null;
-  created_at: string;
+  projectId?: string;
+  startTime: number;
+  endTime: number;
+  duration?: number;
+  confidenceScore: number;
+  reasons: string[];
+  suggestedCaption: string;
+  transcriptSnippet?: string;
+  moodTags?: string[];
+  platformTargets?: string[];
+  status?: string;
+  selected?: boolean;
 }
 
 export interface SubtitleSegment {
-  start: number;
-  end: number;
+  id: string;
   text: string;
+  startTime: number;
+  endTime: number;
+  words?: { word: string; start: number; end: number; probability: number }[];
 }
 
 export interface AnalyzeResponse {
-  jobId: string;
+  transcriptionJobId: string;
+  analysisJobId: string;
+  message: string;
 }
 
 export interface UploadResponse {
-  url: string;
-  path: string;
+  videoUrl: string;
+  projectId: string;
 }
 
 export interface JobProgress {
   jobId: string;
-  status: 'QUEUED' | 'ACTIVE' | 'Completed' | 'Failed' | 'COMPLETED' | 'FAILED';
+  type?: string;
+  status: string;
   progress: number;
   returnvalue?: Record<string, unknown>;
   failedReason?: string;
   result?: Record<string, unknown>;
 }
+
 
 // =============================================================================
 // Core HTTP helpers
@@ -111,8 +125,8 @@ export const api = {
 
   getProject: (projectId: string) => get<Project>(`/projects/${projectId}`),
 
-  createProject: (name: string, videoUrl: string) =>
-    post<Project>('/projects', { name, video_url: videoUrl }),
+  createProject: (name: string, videoUrl?: string) =>
+    post<Project>('/projects', { name, videoUrl }),
 
   deleteProject: (projectId: string) =>
     post<{ success: boolean }>(`/projects/${projectId}`, { _method: 'DELETE' }),
@@ -120,37 +134,44 @@ export const api = {
   // ---- Clips ----
   getClips: (projectId: string) =>
     get<ClipCandidate[]>(`/projects/${projectId}/clips`),
+
   createManualClip: (projectId: string, startTime: number, endTime: number) =>
     post<{ clipId: string }>(`/projects/${projectId}/clips/manual`, { startTime, endTime }),
+
+  selectClip: (projectId: string, clipId: string, selected: boolean) =>
+    post<void>(`/projects/${projectId}/clips/${clipId}/select`, { selected }),
+
+  getSubtitles: (projectId: string, clipId: string) =>
+    get<SubtitleSegment[]>(`/projects/${projectId}/subtitles/${clipId}`),
+
   // ---- Analysis ----
   analyze: (projectId: string, videoUrl: string) =>
     post<AnalyzeResponse>(`/projects/${projectId}/analyze`, { videoUrl }),
+
+  getJobStatus: (jobId: string) =>
+    get<JobProgress>(`/jobs/${jobId}`),
+  // ---- Export ----
+  createExportJob: (projectId: string, data: {
+    clipId?: string;
+    trimStart: number;
+    trimEnd: number;
+    subtitles: SubtitleSegment[];
+    preset: string;
+  }) =>
+    post<{ jobId: string; exportId: string }>(`/projects/${projectId}/export`, data),
+
+  getExportJob: (exportId: string) =>
+    get<{ status: string; progress: number; outputUrl?: string }>(`/exports/${exportId}/status`),
+
+  getExports: (projectId: string) =>
+    get<Array<{ id: string; status: string; outputUrl?: string; preset: string; createdAt: string }>>(`/projects/${projectId}/exports`),
+
   // ---- Uploads ----
-  getUploadUrl: (filename: string, contentType: string) =>
-    post<UploadResponse>('/uploads/url', { filename, content_type: contentType }),
-
-  uploadFile: async (file: { uri: string; name: string; type: string }) => {
-    // 1. Get signed URL
-    const { url, path } = await api.getUploadUrl(file.name, file.type);
-
-    // 2. PUT file to storage
-    const res = await fetch(url, {
-      method: 'PUT',
-      body: await (await fetch(file.uri)).blob(),
-      headers: { 'Content-Type': file.type },
-    });
-    if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-
-    return { url: path };
-  },
-
-  // ---- Audio ----
-  uploadAudioFile: async (file: { uri: string; fileName?: string; mimeType?: string; fileSize?: number }): Promise<{ audioUrl: string }> => {
-    // Reuse uploadFile — it works for any file type (audio included)
-    const name = file.fileName ?? 'audio.mp3';
-    const type = file.mimeType ?? 'audio/mpeg';
-    const { url } = await api.uploadFile({ uri: file.uri, name, type });
-    return { audioUrl: url };
+  uploadVideoFile: async (uri: string, fileName: string): Promise<UploadResponse> => {
+    const formData = new FormData();
+    formData.append('video', { uri, name: fileName, type: 'video/mp4' } as any);
+    formData.append('name', fileName);
+    return post<UploadResponse>('/projects/upload', formData, true);
   },
   // ---- Health ----
   checkHealth: () =>

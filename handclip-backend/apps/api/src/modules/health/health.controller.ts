@@ -1,4 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
+import { Public } from '../../decorators/public.decorator';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { SupabaseService } from '../supabase/supabase.service';
@@ -10,6 +11,7 @@ export class HealthController {
     @InjectQueue('transcription') private readonly transcriptionQueue: Queue,
   ) {}
 
+  @Public()
   @Get()
   async check() {
     const checks: Record<string, string> = { api: 'ok' };

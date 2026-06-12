@@ -33,6 +33,8 @@ WORKDIR /app
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/node_modules ./node_modules
 
+USER node
+
 EXPOSE 3000
 
 CMD ["node", "apps/api/dist/main"]
