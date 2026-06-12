@@ -1,4 +1,5 @@
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { AuthGuard } from './guards/auth.guard';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
@@ -22,13 +23,15 @@ import { BillingModule } from './modules/billing/billing.module';
       envFilePath: '.env',
     }),
     ThrottlerModule.forRoot([{
-      ttl: 60000,      // 1 minute window
-      limit: 100,       // 100 requests per minute
+      ttl: 60000,
+      limit: 100,
     }]),
     BullModule.forRoot({
       connection: {
         host: process.env.REDIS_HOST || 'localhost',
         port: parseInt(process.env.REDIS_PORT || '6379', 10),
+        password: process.env.REDIS_PASSWORD || undefined,
+        maxRetriesPerRequest: null,
       },
     }),
     SupabaseModule,
@@ -47,6 +50,10 @@ import { BillingModule } from './modules/billing/billing.module';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: AuthGuard,
     },
   ],
 })

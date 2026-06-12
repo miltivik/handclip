@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 export interface Subtitle {
+  id: string;
   text: string;
   startTime: number;
   endTime: number;
@@ -56,7 +57,7 @@ const MAX_UNDO_STACK = 20;
 export const useEditorStore = create<EditorStore>((set, get) => ({
   selectedClipId: null,
   trimStart: 0,
-  trimEnd: 15,
+  trimEnd: 0,
   subtitles: [],
   preset: 'tiktok',
   undoStack: [],

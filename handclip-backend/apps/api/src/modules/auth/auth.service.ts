@@ -27,6 +27,7 @@ export class AuthService {
     });
 
     if (error) {
+      console.error('Auth login failed:', error);
       throw new Error(error.message);
     }
 
@@ -42,6 +43,7 @@ export class AuthService {
     });
 
     if (error) {
+      console.error('Auth verify failed:', error);
       throw new Error(error.message);
     }
 
@@ -53,6 +55,7 @@ export class AuthService {
     const { data, error } = await client.auth.getUser(token);
 
     if (error) {
+      console.error('Auth getUser failed:', error);
       throw new Error(error.message);
     }
 

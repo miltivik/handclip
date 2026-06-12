@@ -38,6 +38,8 @@ COPY --from=build /app/dist/libs/shared ./libs/shared/dist
 COPY --from=build /app/node_modules ./node_modules
 RUN mkdir -p /app/dist/apps/worker && ln -s /app/apps/worker/node_modules /app/dist/apps/worker/node_modules
 
+USER node
+
 WORKDIR /app/apps/worker
 
 ENV NODE_PATH=/app/apps/worker/node_modules:/app/libs/shared/node_modules:/app/node_modules

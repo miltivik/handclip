@@ -38,6 +38,8 @@ COPY --from=build /app/dist/libs/shared ./libs/shared/dist
 COPY --from=build /app/node_modules ./node_modules
 RUN mkdir -p /app/dist/apps/api && ln -s /app/apps/api/node_modules /app/dist/apps/api/node_modules
 
+USER node
+
 EXPOSE 3000
 
 WORKDIR /app/apps/api

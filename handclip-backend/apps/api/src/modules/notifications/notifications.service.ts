@@ -5,9 +5,12 @@ import { SupabaseService } from '../supabase/supabase.service';
 export class NotificationsService {
   constructor(private readonly supabaseService: SupabaseService) {}
 
-  async sendPushNotification(userId: string, title: string, body: string, data?: Record<string, string>) {
+  async sendPushNotification(userId: string, title: string, body: string, token?: string, data?: Record<string, string>) {
     // Get user's Expo push token from profiles
-    const { data: profile } = await this.supabaseService.getServiceRoleClient()
+    const client = token
+      ? this.supabaseService.getClientWithAuth(token)
+      : this.supabaseService.getClient();
+    const { data: profile } = await client
       .from('profiles')
       .select('expo_push_token')
       .eq('id', userId)

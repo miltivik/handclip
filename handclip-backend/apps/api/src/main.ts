@@ -7,25 +7,34 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-import { NestFactory } from '@nestjs/core';
+import { NestFactory, HttpAdapterHost } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { CatchEverythingFilter } from './filters/catch-everything.filter';
 import helmet from 'helmet';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
 
+  // Global exception filter — catches 500s, hides stack traces in prod
+  const httpAdapterHost = app.get(HttpAdapterHost);
+  app.useGlobalFilters(new CatchEverythingFilter(httpAdapterHost));
+
+  // CORS
+  app.enableCors({
+    origin: process.env.CORS_ORIGIN || '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Internal-API-Key'],
+  });
+
+  // Request ID middleware — propagates x-request-id for structured logging
+  app.use((req: any, res: any, next: any) => {
+    req.id = req.headers['x-request-id'] || `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    res.setHeader('x-request-id', req.id);
+    next();
+  });
+
   // Security headers
   app.use(helmet());
-
-  // CORS hardening — only allow frontend origin in production
-  app.enableCors({
-    origin: process.env.CORS_ORIGINS
-      ? process.env.CORS_ORIGINS.split(',').map((s) => s.trim())
-      : '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true,
-  });
 
   app.setGlobalPrefix('api');
 
