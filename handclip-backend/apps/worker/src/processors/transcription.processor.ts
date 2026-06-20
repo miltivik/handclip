@@ -1,4 +1,4 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
 import { Job, Queue } from 'bullmq';
 import { SubtitleSegment, SubtitleSegmentSchema } from '@handclip/shared';
 import { SupabaseService } from '../modules/supabase/supabase.service';
@@ -8,10 +8,10 @@ import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 interface WhisperWord {
   word: string;
@@ -37,6 +37,7 @@ export class TranscriptionProcessor extends WorkerHost {
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly notificationsService: NotificationsService,
+    @InjectQueue('clip-analysis') private readonly clipQueue: Queue,
   ) {
     super();
     this.openai = new OpenAI({
@@ -105,8 +106,10 @@ export class TranscriptionProcessor extends WorkerHost {
       await job.updateProgress(20);
       console.log(`[Transcription] Extracting audio for project ${projectId}`);
 
-      await execAsync(
-        `ffmpeg -i "${videoPath}" -vn -acodec libmp3lame -ar 16000 -ab 64k -y "${audioPath}" 2>&1`
+      await execFileAsync(
+        'ffmpeg',
+        ['-i', videoPath, '-vn', '-acodec', 'libmp3lame', '-ar', '16000', '-ab', '64k', '-y', audioPath],
+        { timeout: 600000 },
       );
 
       // Step 3: Call Whisper API with word-level timestamps
@@ -190,14 +193,7 @@ export class TranscriptionProcessor extends WorkerHost {
       console.log(`[Transcription] Completed for project ${projectId}: ${segments.length} segments`);
 
       // Step 5: Enqueue clip-analysis job
-      const clipQueue = new Queue('clip-analysis', {
-        connection: {
-          host: process.env.REDIS_HOST || 'localhost',
-          port: parseInt(process.env.REDIS_PORT || '6379', 10),
-        },
-      });
-
-      await clipQueue.add('analyze-clips', {
+      await this.clipQueue.add('analyze-clips', {
         projectId,
         userId: job.data.userId,
         videoUrl,
@@ -205,7 +201,6 @@ export class TranscriptionProcessor extends WorkerHost {
         trackingJobId,
       });
 
-      await clipQueue.close();
       console.log(`[Transcription] Enqueued clip-analysis for project ${projectId}`);
 
       return { segments };
@@ -258,14 +253,15 @@ export class TranscriptionProcessor extends WorkerHost {
   ): Promise<{ segments: any[]; language: string }> {
     // Use FFmpeg silencedetect to find speech segments
     // This provides rough timestamps without actual transcription
-    const { stdout } = await execAsync(
-      `ffmpeg -i "${audioPath}" -af "silencedetect=n=-30dB:d=0.5" -f null - 2>&1`,
+    const { stderr } = await execFileAsync(
+      'ffmpeg',
+      ['-i', audioPath, '-af', 'silencedetect=n=-30dB:d=0.5', '-f', 'null', '-'],
       { timeout: 60000 },
     );
     // Parse silence_start/silence_end from FFmpeg output
     const silenceStarts: number[] = [];
     const silenceEnds: number[] = [];
-    const lines = stdout.split('\n');
+    const lines = stderr.split('\n');
     for (const line of lines) {
       const startMatch = line.match(/silence_start: ([\d.]+)/);
       const endMatch = line.match(/silence_end: ([\d.]+)/);

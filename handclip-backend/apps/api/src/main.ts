@@ -20,8 +20,50 @@ async function bootstrap() {
   app.useGlobalFilters(new CatchEverythingFilter(httpAdapterHost));
 
   // CORS
+  const rawCorsOrigin = process.env.CORS_ORIGIN?.trim();
+  const allowedOrigins = rawCorsOrigin
+    ? rawCorsOrigin.split(',').map((o) => o.trim()).filter(Boolean)
+    : [];
+
+  if (allowedOrigins.length === 0 && process.env.NODE_ENV === 'production') {
+    console.error(
+      '[CORS] CORS_ORIGIN must be set in production. ' +
+      'Use a comma-separated allowlist of origins (e.g. https://app.handclip.com,https://admin.handclip.com).',
+    );
+    process.exit(1);
+  }
+
+  if (allowedOrigins.includes('*') && process.env.NODE_ENV === 'production') {
+    console.error(
+      '[CORS] Wildcard (*) is not allowed as CORS_ORIGIN in production. ' +
+      'Set CORS_ORIGIN to a comma-separated allowlist of origins.',
+    );
+    process.exit(1);
+  }
+
+  const corsOrigin: string | string[] | boolean =
+    allowedOrigins.length === 0
+      ? '*'
+      : allowedOrigins.length === 1
+        ? allowedOrigins[0]
+        : allowedOrigins;
+
+  if (allowedOrigins.length === 0) {
+    console.warn(
+      '[CORS] CORS_ORIGIN is not set. Allowing all origins (*). ' +
+      'Set CORS_ORIGIN to a comma-separated allowlist before deploying to production.',
+    );
+  }
+
+  if (allowedOrigins.includes('*')) {
+    console.warn(
+      '[CORS] CORS_ORIGIN contains wildcard (*). ' +
+      'Use a comma-separated allowlist in any environment that handles real user data.',
+    );
+  }
+
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: corsOrigin,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Internal-API-Key'],
   });

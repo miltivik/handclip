@@ -24,8 +24,9 @@ const baseOpts = {
 // Helper to call the private method via prototype
 function callBuildFFmpegCommand(opts: Record<string, unknown>): string {
   const prototype = RenderProcessor.prototype as unknown as Record<string, unknown>;
-  const method = prototype.buildFFmpegCommand as ((opts: Record<string, unknown>) => string) | undefined;
-  return method ? method.call({}, opts) : '';
+  const method = prototype.buildFFmpegCommand as ((opts: Record<string, unknown>) => string | string[]) | undefined;
+  const result = method ? method.call({}, opts) : '';
+  return Array.isArray(result) ? result.join(' ') : result;
 }
 
 describe('render.processor helpers', () => {

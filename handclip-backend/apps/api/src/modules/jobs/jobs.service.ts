@@ -63,9 +63,35 @@ export interface EnqueueRenderInput {
   clientRequestId?: string;
 }
 
+interface CacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+class TtlMap<T> {
+  private store = new Map<string, CacheEntry<T>>();
+
+  constructor(private readonly ttlMs: number) {}
+
+  get(key: string): T | undefined {
+    const entry = this.store.get(key);
+    if (!entry) return undefined;
+    if (Date.now() > entry.expiresAt) {
+      this.store.delete(key);
+      return undefined;
+    }
+    return entry.value;
+  }
+
+  set(key: string, value: T): void {
+    this.store.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+  }
+}
+
 @Injectable()
 export class JobsService {
-  private progressCache = new Map<string, JobStatusDto>();
+  // Transient cache for job progress lookups; TTL avoids unbounded growth.
+  private progressCache = new TtlMap<JobStatusDto>(30_000);
 
   constructor(
     @InjectQueue('transcription') private transcriptionQueue: Queue,

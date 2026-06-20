@@ -11,6 +11,7 @@ import { RawBodyRequest } from '@nestjs/common';
 import { Request } from 'express';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { ConfigService } from '@nestjs/config';
+import { Public } from '../../decorators/public.decorator';
 import { BearerUserGuard } from '../auth/bearer-user.guard';
 import { CurrentUser, ResolvedUser } from '../auth/current-user.decorator';
 import { BillingService } from './billing.service';
@@ -36,6 +37,7 @@ export class BillingController {
     return this.billing.createCheckout(user, customerIp);
   }
 
+  @Public()
   @Post('webhook')
   async webhook(@Req() request: RawBodyRequest<Request>, @Body() body: unknown) {
     const secret = this.config.get<string>('POLAR_WEBHOOK_SECRET');

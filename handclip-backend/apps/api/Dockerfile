@@ -44,6 +44,7 @@ EXPOSE 3000
 
 WORKDIR /app/apps/api
 
+ENV NODE_ENV=production
 ENV NODE_PATH=/app/apps/api/node_modules:/app/libs/shared/node_modules:/app/node_modules
 
 CMD ["node", "../../dist/apps/api/src/main.js"]

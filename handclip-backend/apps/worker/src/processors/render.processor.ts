@@ -3,14 +3,14 @@ import { Job } from 'bullmq';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { SupabaseService } from '../modules/supabase/supabase.service';
 import { NotificationsService } from '../modules/notifications/notifications.service';
 import { downloadMusicAsset, downloadSourceVideo } from './source-video';
 import { incrementExportCount } from '../providers/export-counter';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 interface RenderJobData {
   projectId: string;
@@ -193,7 +193,7 @@ export class RenderProcessor extends WorkerHost {
       let lastError: Error | null = null;
       for (let attempt = 0; attempt < codecFallbacks.length; attempt++) {
         const fb = codecFallbacks[attempt];
-        const attemptCmd = this.buildFFmpegCommand({
+        const attemptArgs = this.buildFFmpegCommand({
           inputPath,
           srtPath: subtitles.length > 0 ? srtPath : null,
           musicPath,
@@ -211,7 +211,7 @@ export class RenderProcessor extends WorkerHost {
           textOverlay,
         });
         try {
-          await execAsync(attemptCmd, { timeout: 300000 });
+          await execFileAsync('ffmpeg', attemptArgs, { timeout: 300000 });
           lastError = null;
           break;
         } catch (err: any) {
@@ -227,9 +227,10 @@ export class RenderProcessor extends WorkerHost {
       const midPoint = trimStart + (trimEnd - trimStart) / 2;
       let thumbnailUrl: string | null = null;
       try {
-        await execAsync(
-          `ffmpeg -ss ${midPoint} -i "${inputPath}" -vframes 1 -q:v 2 -y "${thumbPath}"`,
-          { timeout: 10000 }
+        await execFileAsync(
+          'ffmpeg',
+          ['-ss', String(midPoint), '-i', inputPath, '-vframes', '1', '-q:v', '2', '-y', thumbPath],
+          { timeout: 10000 },
         );
         // Upload thumbnail to Supabase Storage
         const thumbBuffer = fs.readFileSync(thumbPath);
@@ -274,8 +275,9 @@ export class RenderProcessor extends WorkerHost {
       // Get video duration for export record
       let duration: number | null = null;
       try {
-        const { stdout } = await execAsync(
-          `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${outputPath}"`
+        const { stdout } = await execFileAsync(
+          'ffprobe',
+          ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', outputPath],
         );
         duration = parseFloat(stdout.trim()) || null;
       } catch {
@@ -390,7 +392,7 @@ export class RenderProcessor extends WorkerHost {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
   }
 
-  /** Construir comando FFmpeg completo */
+  /** Construir argumentos FFmpeg como array (evita shell injection) */
   private buildFFmpegCommand(opts: {
     inputPath: string;
     srtPath: string | null;
@@ -407,7 +409,7 @@ export class RenderProcessor extends WorkerHost {
     crf?: number;
     speed?: number;
     textOverlay?: { text: string; position: string } | null;
-  }): string {
+  }): string[] {
     const { inputPath, srtPath, musicPath, trimStart, trimEnd, config, musicVolume, musicFadeIn, musicFadeOut, outputPath, codec, preset, crf, speed = 1, textOverlay = null } = opts;
     const duration = trimEnd - trimStart;
     const outputDuration = duration / speed;
@@ -437,14 +439,6 @@ export class RenderProcessor extends WorkerHost {
 
     const videoFilterStr = videoFilters.join(',');
 
-    // Build the full command
-    let cmd = `ffmpeg -i "${inputPath}"`;
-
-    // Add music input if provided
-    if (musicPath) {
-      cmd += ` -i "${musicPath}"`;
-    }
-
     // Filter complex
     const filterParts: string[] = [];
     filterParts.push(`[0:v]${videoFilterStr}[vout]`);
@@ -469,27 +463,43 @@ export class RenderProcessor extends WorkerHost {
       musicChain += `[m audio]`;
       filterParts.push(musicChain);
 
-
       // Mix voice + music
       filterParts.push(`[vaudio][m audio]amix=inputs=2:duration=first:dropout_transition=2,volume=1.2[aout]`);
     } else {
       filterParts.push(`[vaudio]volume=1.0[aout]`);
     }
 
-    cmd += ` -filter_complex "${filterParts.join(';')}"`;
-    cmd += ` -map "[vout]" -map "[aout]"`;
     const finalCodec = codec || 'libx264';
     const finalPreset = preset || config.preset;
     const finalCrf = crf !== undefined ? crf : config.crf;
-    cmd += ` -c:v ${finalCodec} -preset ${finalPreset} -crf ${finalCrf}`;
     // Robust bitrate parsing: handle both '8M' and '8000k' formats
     const bitrateNum = parseInt(config.videoBitrate.replace(/[^0-9]/g, ''), 10);
-    cmd += ` -maxrate ${config.videoBitrate} -bufsize ${bitrateNum * 2}k`;
-    cmd += ` -pix_fmt yuv420p`;
-    cmd += ` -c:a aac -b:a ${config.audioBitrate} -ar 48000`;
-    cmd += ` -movflags +faststart`;
-    cmd += ` -y "${outputPath}"`;
 
-    return cmd;
+    const args: string[] = [
+      '-i', inputPath,
+    ];
+
+    if (musicPath) {
+      args.push('-i', musicPath);
+    }
+
+    args.push(
+      '-filter_complex', filterParts.join(';'),
+      '-map', '[vout]',
+      '-map', '[aout]',
+      '-c:v', finalCodec,
+      '-preset', finalPreset,
+      '-crf', String(finalCrf),
+      '-maxrate', config.videoBitrate,
+      '-bufsize', `${bitrateNum * 2}k`,
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', config.audioBitrate,
+      '-ar', '48000',
+      '-movflags', '+faststart',
+      '-y', outputPath,
+    );
+
+    return args;
   }
 }

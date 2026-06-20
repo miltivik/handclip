@@ -3,6 +3,8 @@ import { ClipCandidate, SubtitleSegment } from '@handclip/shared';
 import { SupabaseService } from '../supabase/supabase.service';
 import { ProjectsService } from '../projects/projects.service';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface Clip extends ClipCandidate {
   projectId: string;
   status: 'candidate' | 'selected' | 'edited' | 'exported';
@@ -90,6 +92,9 @@ export class ClipsService {
     userId: string,
   ): Promise<SubtitleSegment[]> {
     await this.projectsService.assertOwnedBy(projectId, userId);
+    if (!UUID_RE.test(clipId)) {
+      return [];
+    }
     const { data, error } = await this.supabaseService
       .getServiceRoleClient()
       .from('subtitles')

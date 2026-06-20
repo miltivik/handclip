@@ -42,7 +42,11 @@ export class UploadsController {
   }
 
   @Post(':uploadId/chunk')
-  @UseInterceptors(FileInterceptor('chunk'))
+  @UseInterceptors(
+    FileInterceptor('chunk', {
+      limits: { fileSize: 5 * 1024 * 1024 }, // 5MB per chunk
+    }),
+  )
   async uploadChunk(
     @CurrentUser() user: ResolvedUser,
     @Param('uploadId') uploadId: string,

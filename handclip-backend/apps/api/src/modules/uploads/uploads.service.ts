@@ -38,7 +38,11 @@ interface UploadMetadata {
   totalChunks: number;
   chunks: Map<number, string>; // chunkIndex -> temp file path
   tempDir: string;
+  /** Timestamp after which the upload metadata is considered stale. */
+  expiresAt: number;
 }
+
+const UPLOAD_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 @Injectable()
 export class UploadsService {
@@ -110,6 +114,9 @@ export class UploadsService {
     const chunkSize = 5 * 1024 * 1024;
     const totalChunks = Math.ceil(fileSize / chunkSize);
 
+    // Opportunistic cleanup of any stale uploads for this user before creating a new one.
+    this.cleanupExpiredUserUploads(userId);
+
     this.uploads.set(uploadId, {
       userId,
       fileName,
@@ -119,6 +126,7 @@ export class UploadsService {
       totalChunks,
       chunks: new Map(),
       tempDir,
+      expiresAt: Date.now() + UPLOAD_TTL_MS,
     });
 
     return { uploadId };
@@ -130,12 +138,22 @@ export class UploadsService {
     chunkIndex: number,
     chunk: Buffer,
   ): Promise<{ received: number; total: number }> {
+    if (!Number.isInteger(chunkIndex) || chunkIndex < 0) {
+      throw new BadRequestException('chunkIndex must be a non-negative integer');
+    }
     const metadata = this.uploads.get(uploadId);
     if (!metadata) {
       throw new BadRequestException('Upload not found or expired');
     }
+    if (Date.now() > metadata.expiresAt) {
+      this.cleanup(metadata);
+      throw new BadRequestException('Upload has expired');
+    }
     if (metadata.userId !== userId) {
       throw new ForbiddenException('Upload does not belong to this user');
+    }
+    if (chunkIndex >= metadata.totalChunks) {
+      throw new BadRequestException('chunkIndex exceeds total chunks');
     }
 
     const chunkPath = join(metadata.tempDir, `chunk-${chunkIndex}`);
@@ -156,6 +174,10 @@ export class UploadsService {
     const metadata = this.uploads.get(uploadId);
     if (!metadata) {
       throw new BadRequestException('Upload not found or expired');
+    }
+    if (Date.now() > metadata.expiresAt) {
+      this.cleanup(metadata);
+      throw new BadRequestException('Upload has expired');
     }
     if (metadata.userId !== userId) {
       throw new ForbiddenException('Upload does not belong to this user');
@@ -338,6 +360,15 @@ export class UploadsService {
           this.uploads.delete(key);
           break;
         }
+      }
+    }
+  }
+
+  private cleanupExpiredUserUploads(userId: string): void {
+    const now = Date.now();
+    for (const [uploadId, metadata] of this.uploads.entries()) {
+      if (metadata.userId === userId && now > metadata.expiresAt) {
+        this.cleanup(metadata);
       }
     }
   }
