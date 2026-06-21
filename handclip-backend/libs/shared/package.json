@@ -6,13 +6,17 @@
   "types": "src/index.ts",
   "scripts": {
     "build": "tsc --build",
-    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "test": "jest"
   },
   "dependencies": {
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/jest": "^29.5.14",
     "@types/node": "^22.13.1",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
     "typescript": "^5.7.3"
   }
 }

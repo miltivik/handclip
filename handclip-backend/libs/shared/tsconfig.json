@@ -3,7 +3,7 @@
   "compilerOptions": {
     "composite": true,
     "outDir": "../../dist/libs/shared",
-    "types": ["node"]
+    "types": ["node", "jest"]
   },
   "references": [],
   "include": ["src/**/*"]
