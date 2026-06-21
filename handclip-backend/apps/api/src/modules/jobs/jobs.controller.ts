@@ -1,6 +1,6 @@
 import { Controller, Get, Param, Sse, Req, HttpException, HttpStatus } from '@nestjs/common';
 import { Throttle, seconds } from '@nestjs/throttler';
-import { Public } from '../../decorators/public.decorator';
+import { CurrentUser } from '../../decorators/current-user.decorator';
 import { CurrentToken } from '../../decorators/current-token.decorator';
 import { Observable } from 'rxjs';
 import { QueueEvents } from 'bullmq';
@@ -38,22 +38,38 @@ export class JobsController {
   @Get('jobs/:jobId')
   async getJobStatus(
     @Param('jobId') jobId: string,
+    @CurrentUser() user: { id: string },
     @CurrentToken() token: string,
   ) {
-    return this.jobsService.getJob(jobId, token);
+    return this.jobsService.getJob(jobId, user.id, token);
   }
 
-  // SSE endpoint: EventSource doesn't reliably send auth headers; job IDs are UUIDs (unguessable).
+  // SSE endpoint. JWT required. Browser EventSource can't send custom
+  // headers, so a `?token=...` query param would be needed for browser use;
+  // deferred. The mobile app polls getJobStatus instead.
   // - Throttle caps burst connection establishment (5/30s per IP).
   // - Per-IP concurrent cap (3) prevents slow-burn DoS via long-held connections.
   // - The 5s poll is the recovery fallback for missed BullMQ events.
-  @Public()
+  // - Ownership: getJob throws if the job's project doesn't belong to the
+  //   caller. Verified at connect time (close early) and at every tick
+  //   (silent ignore if the ownership changes mid-stream).
   @Throttle({ default: { limit: 5, ttl: seconds(30) } })
   @Sse('jobs/:jobId/progress')
-  getJobProgress(@Param('jobId') jobId: string, @Req() req: any): Observable<MessageEvent> {
+  getJobProgress(
+    @Param('jobId') jobId: string,
+    @CurrentUser() user: { id: string },
+    @CurrentToken() token: string,
+    @Req() req: any,
+  ): Observable<MessageEvent> {
     return new Observable((subscriber) => {
       let cleaned = false;
       const ip = req.ip || 'unknown';
+
+      // defense-in-depth: verify ownership at connection time, close early if not owner
+      this.jobsService.getJob(jobId, user.id, token).catch(() => {
+        if (cleaned) return;
+        subscriber.error(new HttpException('Job not found', HttpStatus.NOT_FOUND));
+      });
 
       if (MAX_SSE_PER_IP > 0) {
         const current = sseConnectionsByIp.get(ip) || 0;
@@ -83,7 +99,7 @@ export class JobsController {
         if (args.jobId && args.jobId !== jobId) return;
 
         try {
-          const progress = await this.jobsService.getJob(jobId);
+          const progress = await this.jobsService.getJob(jobId, user.id, token);
           subscriber.next({ data: JSON.stringify(progress) } as MessageEvent);
 
           if (progress.status === 'COMPLETED' || progress.status === 'FAILED') {
@@ -100,11 +116,10 @@ export class JobsController {
         qe.on('failed', handler);
       }
 
-      // Recovery poll: only fires if no BullMQ event has arrived. The push
-      // path is the primary delivery mechanism; this catches missed events.
+      // Recovery poll: only fires if no BullMQ event has arrived.
       const fallback = setInterval(async () => {
         try {
-          const progress = await this.jobsService.getJob(jobId);
+          const progress = await this.jobsService.getJob(jobId, user.id, token);
           subscriber.next({ data: JSON.stringify(progress) } as MessageEvent);
 
           if (progress.status === 'COMPLETED' || progress.status === 'FAILED') {

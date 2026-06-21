@@ -11,17 +11,24 @@ import { Throttle, seconds } from '@nestjs/throttler';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../../decorators/current-user.decorator';
 import { CurrentToken } from '../../decorators/current-token.decorator';
+import { ZodValidationPipe } from '../../pipes/zod-validation.pipe';
+import { CHUNK_UPLOAD_SIZE_BYTES } from '@handclip/shared';
+import {
+  InitUploadDtoSchema,
+  InitUploadDto,
+  CompleteUploadDtoSchema,
+  CompleteUploadDto,
+} from '@handclip/shared';
 import { UploadsService } from './uploads.service';
 
 @Controller('uploads')
 export class UploadsController {
   constructor(private readonly uploadsService: UploadsService) {}
 
-  // init: low — each init creates a 30-min upload session with reserved disk
   @Post('init')
   @Throttle({ default: { limit: 10, ttl: seconds(60) } })
   async initUpload(
-    @Body() body: { fileName: string; fileSize: number; mimeType: string },
+    @Body(new ZodValidationPipe(InitUploadDtoSchema)) body: InitUploadDto,
     @CurrentUser() user: { id: string },
   ) {
     const uploadId = await this.uploadsService.initUpload(
@@ -30,16 +37,18 @@ export class UploadsController {
       body.fileSize,
       body.mimeType,
     );
-    return uploadId;
+    return { uploadId };
   }
 
-  // chunk: a 500MB upload = 100 chunks. Allow 1000/min per IP so retries
-  // don't blow the limit. Still bounded.
   @Post(':uploadId/chunk')
   @Throttle({ default: { limit: 1000, ttl: seconds(60) } })
-  @UseInterceptors(FileInterceptor('chunk'))
+  @UseInterceptors(FileInterceptor('chunk', {
+    // ponytail: 5MB chunk + 1KB overhead for multipart framing
+    limits: { fileSize: CHUNK_UPLOAD_SIZE_BYTES + 1024 },
+  }))
   async uploadChunk(
     @Param('uploadId') uploadId: string,
+    @CurrentUser() user: { id: string },
     @UploadedFile() file: Express.Multer.File,
     @Body('chunkIndex') chunkIndex: string,
   ) {
@@ -47,17 +56,16 @@ export class UploadsController {
     if (isNaN(index)) {
       throw new BadRequestException('chunkIndex must be a number');
     }
-    return this.uploadsService.uploadChunk(uploadId, index, file.buffer);
+    return this.uploadsService.uploadChunk(uploadId, index, file.buffer, user.id);
   }
 
-  // complete: low — one per upload session
   @Post(':uploadId/complete')
   @Throttle({ default: { limit: 30, ttl: seconds(60) } })
   async completeUpload(
     @Param('uploadId') uploadId: string,
     @CurrentUser() user: { id: string },
     @CurrentToken() token: string,
-    @Body() body: { checksum?: string },
+    @Body(new ZodValidationPipe(CompleteUploadDtoSchema)) body: CompleteUploadDto,
   ) {
     return this.uploadsService.completeUpload(uploadId, user.id, token, body.checksum);
   }

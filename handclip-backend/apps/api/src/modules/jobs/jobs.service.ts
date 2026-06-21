@@ -157,7 +157,7 @@ export class JobsService {
     };
   }
 
-  async getJob(jobId: string, token?: string): Promise<JobStatusDto> {
+  async getJob(jobId: string, userId: string, token?: string): Promise<JobStatusDto> {
     const supabase = token
       ? this.supabaseService.getClientWithAuth(token)
       : this.supabaseService.getClient();
@@ -172,6 +172,19 @@ export class JobsService {
     }
 
     const jobsRow = row as JobsRow;
+
+    // defense-in-depth: verify the job's project belongs to the caller
+    if (jobsRow.project_id) {
+      const { data: project } = await supabase
+        .from('projects')
+        .select('user_id')
+        .eq('id', jobsRow.project_id)
+        .single();
+      if (!project || project.user_id !== userId) {
+        // 404 not 403: don't leak existence
+        throw new Error(`Job ${jobId} not found`);
+      }
+    }
 
     // If queued or active, check BullMQ for real-time progress
     if (jobsRow.status === 'queued' || jobsRow.status === 'active') {

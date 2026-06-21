@@ -46,14 +46,16 @@ function mapExport(row: ExportRow): Export {
 export class ExportsService {
   constructor(private supabaseService: SupabaseService) {}
 
-  async findByProject(projectId: string, token: string): Promise<Export[]> {
+  async findByProject(projectId: string, userId: string, token: string): Promise<Export[]> {
     const client = this.supabaseService.getClientWithAuth(token);
+    // defense-in-depth: join projects!inner so we filter by user_id on top of RLS
     const { data, error } = await client
       .from('exports')
       .select(
-        'id, project_id, clip_id, preset, status, output_url, file_size, duration, created_at, completed_at',
+        'id, project_id, clip_id, preset, status, output_url, file_size, duration, created_at, completed_at, projects!inner(user_id)',
       )
       .eq('project_id', projectId)
+      .eq('projects.user_id', userId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -63,14 +65,15 @@ export class ExportsService {
     return (data ?? []).map((row) => mapExport(row as ExportRow));
   }
 
-  async findOne(id: string, token: string): Promise<Export | null> {
+  async findOne(id: string, userId: string, token: string): Promise<Export | null> {
     const client = this.supabaseService.getClientWithAuth(token);
     const { data, error } = await client
       .from('exports')
       .select(
-        'id, project_id, clip_id, preset, status, output_url, file_size, duration, created_at, completed_at',
+        'id, project_id, clip_id, preset, status, output_url, file_size, duration, created_at, completed_at, projects!inner(user_id)',
       )
       .eq('id', id)
+      .eq('projects.user_id', userId)
       .single();
 
     if (error) {
@@ -80,13 +83,13 @@ export class ExportsService {
     return mapExport(data as ExportRow);
   }
 
-  async getStatus(id: string, token: string): Promise<{
+  async getStatus(id: string, userId: string, token: string): Promise<{
     status: string;
     progress: number;
     outputUrl: string | null;
     error?: string;
   } | null> {
-    const exportRecord = await this.findOne(id, token);
+    const exportRecord = await this.findOne(id, userId, token);
     if (!exportRecord) return null;
 
     // If already completed or failed, return immediately

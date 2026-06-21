@@ -2,6 +2,8 @@ import { Controller, Post, Get, Body } from '@nestjs/common';
 import { Throttle, seconds } from '@nestjs/throttler';
 import { Public } from '../../decorators/public.decorator';
 import { CurrentUser } from '../../decorators/current-user.decorator';
+import { ZodValidationPipe } from '../../pipes/zod-validation.pipe';
+import { LoginDtoSchema, VerifyDtoSchema, LoginDto, VerifyDto } from '@handclip/shared';
 import { AuthService } from './auth.service';
 
 @Controller('auth')
@@ -11,14 +13,14 @@ export class AuthController {
   @Throttle({ default: { ttl: seconds(60), limit: 5 } })
   @Public()
   @Post('login')
-  async login(@Body() body: { email: string }) {
+  async login(@Body(new ZodValidationPipe(LoginDtoSchema)) body: LoginDto) {
     return this.authService.login(body.email);
   }
 
   @Throttle({ default: { ttl: seconds(60), limit: 5 } })
   @Public()
   @Post('verify')
-  async verify(@Body() body: { token: string; email: string }) {
+  async verify(@Body(new ZodValidationPipe(VerifyDtoSchema)) body: VerifyDto) {
     return this.authService.verify(body.token, body.email);
   }
 

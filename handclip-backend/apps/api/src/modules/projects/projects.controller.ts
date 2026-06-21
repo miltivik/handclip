@@ -7,17 +7,26 @@ import {
   Body,
   UseInterceptors,
   UploadedFile,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import * as os from 'os';
+import { randomUUID } from 'crypto';
 import { unlinkSync } from 'fs';
 import { CurrentUser } from '../../decorators/current-user.decorator';
 import { CurrentToken } from '../../decorators/current-token.decorator';
 import { JobsService } from '../jobs/jobs.service';
 import { ProjectsService } from './projects.service';
 import { ZodValidationPipe } from '../../pipes/zod-validation.pipe';
-import { AnalyzeProjectDtoSchema, AnalyzeProjectDto } from '@handclip/shared';
+import {
+  AnalyzeProjectDtoSchema,
+  AnalyzeProjectDto,
+  CreateProjectDtoSchema,
+  CreateProjectDto,
+  ExportClipDtoSchema,
+  ExportClipDto,
+} from '@handclip/shared';
 
 @Controller('projects')
 export class ProjectsController {
@@ -28,14 +37,7 @@ export class ProjectsController {
 
   @Post()
   async create(
-    @Body() body: {
-      name: string;
-      description?: string;
-      sourceVideoUrl?: string;
-      duration?: number;
-      width?: number;
-      height?: number;
-    },
+    @Body(new ZodValidationPipe(CreateProjectDtoSchema)) body: CreateProjectDto,
     @CurrentUser() user: { id: string },
   ) {
     return this.projectsService.create(user.id, body);
@@ -46,8 +48,10 @@ export class ProjectsController {
     FileInterceptor('video', {
       storage: diskStorage({
         destination: os.tmpdir(),
-        filename: (req, file, cb) =>
-          cb(null, `${Date.now()}-${file.originalname}`),
+        // ponytail: randomUUID — originalname is user input, can contain
+        // ../, NUL, or platform-specific separators. mime type is the source
+        // of truth for extension; filename is throwaway.
+        filename: (req, file, cb) => cb(null, `${randomUUID()}-${Date.now()}`),
       }),
       limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB
       fileFilter: (req, file, cb) => {
@@ -123,26 +127,21 @@ export class ProjectsController {
     @CurrentUser() user: { id: string },
     @CurrentToken() token: string,
   ) {
+    // defense-in-depth: verify project ownership before enqueueing
+    await this.projectsService.findOne(id, user.id);
     const result = await this.jobsService.enqueueAnalysis(token, id, body.videoUrl);
     return { jobId: result.transcriptionJobId };
   }
+
   @Post(':id/export')
   async exportClip(
     @Param('id') id: string,
     @CurrentUser() user: { id: string },
     @CurrentToken() token: string,
-    @Body() body: {
-      clipId: string;
-      trimStart: number;
-      trimEnd: number;
-      subtitles: unknown[];
-      musicUrl?: string;
-      musicVolume?: number;
-      musicFadeIn?: number;
-      musicFadeOut?: number;
-      preset: 'tiktok' | 'reels' | 'shorts' | 'draft' | 'hq';
-    },
+    @Body(new ZodValidationPipe(ExportClipDtoSchema)) body: ExportClipDto,
   ) {
+    // defense-in-depth: verify project ownership before enqueueing
+    await this.projectsService.findOne(id, user.id);
     const videoUrl = await this.projectsService.getVideoUrl(id, user.id);
 
     const result = await this.jobsService.enqueueRender(token, {
@@ -170,6 +169,8 @@ export class ProjectsController {
     @CurrentUser() user: { id: string },
     @CurrentToken() token: string,
   ) {
-    return this.jobsService.getJob(jobId, token);
+    // defense-in-depth: verify project ownership
+    await this.projectsService.findOne(id, user.id);
+    return this.jobsService.getJob(jobId, user.id, token);
   }
 }

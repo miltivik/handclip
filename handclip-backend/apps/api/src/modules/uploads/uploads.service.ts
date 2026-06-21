@@ -78,10 +78,15 @@ export class UploadsService implements OnModuleDestroy {
     uploadId: string,
     chunkIndex: number,
     chunk: Buffer,
+    userId: string,
   ): Promise<{ received: number; total: number }> {
     this.cleanExpiredUploads();
     const metadata = this.uploads.get(uploadId);
     if (!metadata) {
+      throw new BadRequestException('Upload not found or expired');
+    }
+    // defense-in-depth: chunk upload only for the session owner
+    if (metadata.userId !== userId) {
       throw new BadRequestException('Upload not found or expired');
     }
 

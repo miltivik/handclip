@@ -173,14 +173,16 @@ create policy "Users can read own exports" on storage.objects
 insert into storage.buckets (id, name, public) values ('thumbnails', 'thumbnails', false);
 create policy "Users can manage own thumbnails" on storage.objects
   for all using (bucket_id = 'thumbnails' and auth.uid()::text = (storage.foldername(name))[1]);
+drop policy if exists "Users can view thumbnails via signed URL" on storage.objects;
 create policy "Users can view thumbnails via signed URL" on storage.objects
-  for select using (bucket_id = 'thumbnails');
+  for select using (bucket_id = 'thumbnails' and auth.uid()::text = (storage.foldername(name))[1]);
 
 -- 7. ATOMIC EXPORT COUNTER (evita race condition)
 create or replace function increment_export_count(user_id uuid)
 returns table(allowed boolean, count integer)
 language plpgsql
-set search_path = ''
+security definer
+set search_path = public, pg_temp
 as $$
 declare
   current_count integer;
@@ -211,3 +213,7 @@ begin
   end if;
 end;
 $$;
+
+-- Lock down execute permission: only authenticated users may call the quota RPC
+revoke execute on function increment_export_count(uuid) from public;
+grant execute on function increment_export_count(uuid) to authenticated;
