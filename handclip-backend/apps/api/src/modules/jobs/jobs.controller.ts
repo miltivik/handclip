@@ -1,4 +1,5 @@
 import { Controller, Get, Param, Sse, Req } from '@nestjs/common';
+import { Throttle, seconds } from '@nestjs/throttler';
 import { Public } from '../../decorators/public.decorator';
 import { CurrentToken } from '../../decorators/current-token.decorator';
 import { Observable } from 'rxjs';
@@ -19,8 +20,12 @@ export class JobsController {
     return this.jobsService.getJob(jobId, token);
   }
 
-  // SSE endpoint: EventSource doesn't reliably send auth headers; job IDs are UUIDs (unguessable)
+  // SSE endpoint: EventSource doesn't reliably send auth headers; job IDs are UUIDs (unguessable).
+  // Throttle caps burst connection establishment (5/30s per IP). The connection
+  // itself runs a 2s DB poll until completion — DoS-by-slow-burn is a
+  // separate concern (would need a per-IP concurrent-connection counter).
   @Public()
+  @Throttle({ default: { limit: 5, ttl: seconds(30) } })
   @Sse('jobs/:jobId/progress')
   getJobProgress(@Param('jobId') jobId: string, @Req() req: any): Observable<MessageEvent> {
     return new Observable((subscriber) => {
