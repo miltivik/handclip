@@ -124,7 +124,7 @@ export class ProjectsController {
     @CurrentToken() token: string,
   ) {
     const result = await this.jobsService.enqueueAnalysis(token, id, body.videoUrl);
-    return { jobId: result.jobId };
+    return { jobId: result.transcriptionJobId };
   }
   @Post(':id/export')
   async exportClip(

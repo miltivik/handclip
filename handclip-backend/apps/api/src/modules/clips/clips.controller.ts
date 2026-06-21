@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Param, Body } from '@nestjs/common';
 import { CurrentUser } from '../../decorators/current-user.decorator';
+import { ClipsService } from './clips.service';
 
-@Controller()
 export class ClipsController {
   constructor(private readonly clipsService: ClipsService) {}
 

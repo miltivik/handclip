@@ -7,6 +7,7 @@ import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseService } from '../modules/supabase/supabase.service';
+import { incrementExportCount } from '../providers/export-counter';
 import { validateTempPath } from '../utils/validate-path';
 import { EXPORT_PRESETS, MIN_CLIP_DURATION_SEC, MAX_CLIP_DURATION_SEC, validatePublicUrl } from '@handclip/shared';
 const execAsync = promisify(exec);
@@ -393,7 +394,7 @@ export class RenderProcessor extends WorkerHost {
     musicPath: string | null;
     trimStart: number;
     trimEnd: number;
-    config: typeof EXPORT_PRESETS.tiktok;
+    config: (typeof EXPORT_PRESETS)[keyof typeof EXPORT_PRESETS];
     musicVolume?: number;
     musicFadeIn?: number;
     musicFadeOut?: number;
