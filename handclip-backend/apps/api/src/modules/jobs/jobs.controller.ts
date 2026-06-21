@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Sse, Req } from '@nestjs/common';
+import { Controller, Get, Param, Sse, Req, HttpException, HttpStatus } from '@nestjs/common';
 import { Throttle, seconds } from '@nestjs/throttler';
 import { Public } from '../../decorators/public.decorator';
 import { CurrentToken } from '../../decorators/current-token.decorator';
@@ -6,11 +6,23 @@ import { Observable } from 'rxjs';
 import { QueueEvents } from 'bullmq';
 import { JobsService } from './jobs.service';
 
+// Max concurrent SSE connections per IP. The throttle on the endpoint
+// caps burst establishment; this caps ongoing cost. Each connection
+// runs a 5s DB poll until completion, so a single attacker holding 3
+// connections generates at most 36 polls/min. 0 = unlimited (not exposed).
+const MAX_SSE_PER_IP = 3;
+// DB poll cadence. 5s instead of 2s halves the per-connection load.
+// BullMQ QueueEvents (push) handles the real-time path; this is the
+// recovery fallback for missed events.
+const POLL_INTERVAL_MS = 5_000;
+
+// ponytail: in-process Map. Same caveat as the provider rate limit
+// and upload state — single-replica OK, multi-replica needs Redis.
+const sseConnectionsByIp = new Map<string, number>();
+
 @Controller()
 export class JobsController {
   constructor(private readonly jobsService: JobsService) {}
-
-  // analyze endpoint is in ProjectsController to avoid route conflict
 
   @Get('jobs/:jobId')
   async getJobStatus(
@@ -21,21 +33,36 @@ export class JobsController {
   }
 
   // SSE endpoint: EventSource doesn't reliably send auth headers; job IDs are UUIDs (unguessable).
-  // Throttle caps burst connection establishment (5/30s per IP). The connection
-  // itself runs a 2s DB poll until completion — DoS-by-slow-burn is a
-  // separate concern (would need a per-IP concurrent-connection counter).
+  // - Throttle caps burst connection establishment (5/30s per IP).
+  // - Per-IP concurrent cap (3) prevents slow-burn DoS via long-held connections.
+  // - The 5s poll is the recovery fallback for missed BullMQ events.
   @Public()
   @Throttle({ default: { limit: 5, ttl: seconds(30) } })
   @Sse('jobs/:jobId/progress')
   getJobProgress(@Param('jobId') jobId: string, @Req() req: any): Observable<MessageEvent> {
     return new Observable((subscriber) => {
       let cleaned = false;
+      const ip = req.ip || 'unknown';
+
+      if (MAX_SSE_PER_IP > 0) {
+        const current = sseConnectionsByIp.get(ip) || 0;
+        if (current >= MAX_SSE_PER_IP) {
+          subscriber.error(
+            new HttpException(
+              `Too many concurrent SSE connections (max ${MAX_SSE_PER_IP} per IP)`,
+              HttpStatus.TOO_MANY_REQUESTS,
+            ),
+          );
+          return;
+        }
+        sseConnectionsByIp.set(ip, current + 1);
+      }
+
       const redisConfig = {
         host: process.env.REDIS_HOST || 'localhost',
         port: parseInt(process.env.REDIS_PORT || '6379', 10),
       };
 
-      // Listen on all three queue event streams
       const queueNames = ['transcription', 'clip-analysis', 'render'];
       const queueEventsList = queueNames.map(
         (name) => new QueueEvents(name, { connection: redisConfig }),
@@ -62,7 +89,8 @@ export class JobsController {
         qe.on('failed', handler);
       }
 
-      // Fallback: emit current state every 2s while waiting for BullMQ events
+      // Recovery poll: only fires if no BullMQ event has arrived. The push
+      // path is the primary delivery mechanism; this catches missed events.
       const fallback = setInterval(async () => {
         try {
           const progress = await this.jobsService.getJob(jobId);
@@ -75,7 +103,7 @@ export class JobsController {
         } catch {
           // not ready yet
         }
-      }, 2000);
+      }, POLL_INTERVAL_MS);
 
       const cleanup = () => {
         if (cleaned) return;
@@ -86,6 +114,14 @@ export class JobsController {
           qe.off('completed', handler);
           qe.off('failed', handler);
           qe.close().catch(() => {});
+        }
+        if (MAX_SSE_PER_IP > 0) {
+          const current = sseConnectionsByIp.get(ip) || 1;
+          if (current <= 1) {
+            sseConnectionsByIp.delete(ip);
+          } else {
+            sseConnectionsByIp.set(ip, current - 1);
+          }
         }
       };
 
