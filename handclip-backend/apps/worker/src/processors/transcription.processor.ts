@@ -23,7 +23,7 @@ interface TranscriptionJobData {
   videoUrl: string;
 }
 
-@Processor('transcription')
+@Processor('transcription', { lockDuration: 600000, lockRenewTime: 30000 })
 export class TranscriptionProcessor extends WorkerHost {
   private openai: OpenAI;
 
@@ -72,30 +72,36 @@ export class TranscriptionProcessor extends WorkerHost {
     const videoPath = path.join(tempDir, `${projectId}-input.mp4`);
     const audioPath = path.join(tempDir, `${projectId}-audio.mp3`);
 
+    let transcriptionDegraded = false;
     try {
-      // Step 1: Download video to temp file
-      let downloadUrl: string;
-      if (videoUrl.startsWith('http')) {
-        downloadUrl = await validatePublicUrl(videoUrl);
-      } else {
-        downloadUrl = videoUrl; // local file path
+      // Step 1: Download video
+      // ponytail: reject local paths. validatePublicUrl enforces HTTPS +
+      // blocks private/loopback/cloud-metadata IPs.
+      const downloadUrl = await validatePublicUrl(videoUrl);
+      const response = await fetch(downloadUrl);
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.startsWith('video/') && !contentType.startsWith('audio/')) {
+        throw new Error(`Unexpected content type: ${contentType}. Expected video/audio.`);
       }
-
-      if (downloadUrl.startsWith('http')) {
-        const response = await fetch(downloadUrl);
-        const contentType = response.headers.get('content-type') || '';
-        if (!contentType.startsWith('video/') && !contentType.startsWith('audio/')) {
-          throw new Error(`Unexpected content type: ${contentType}. Expected video/audio.`);
+      // ponytail: stream-accumulate with a cap (the previous code loaded
+      // the whole file via response.arrayBuffer() — 500MB video = 500MB heap).
+      const MAX_DOWNLOAD_BYTES = 600 * 1024 * 1024;
+      const chunks: Buffer[] = [];
+      let received = 0;
+      for await (const chunk of response.body!) {
+        received += chunk.length;
+        if (received > MAX_DOWNLOAD_BYTES) {
+          throw new Error(`Download exceeds ${MAX_DOWNLOAD_BYTES} bytes`);
         }
-        const buffer = Buffer.from(await response.arrayBuffer());
-        fs.writeFileSync(videoPath, buffer);
+        chunks.push(chunk as Buffer);
       }
+      fs.writeFileSync(videoPath, Buffer.concat(chunks));
+      await job.updateProgress(15);
 
       // Step 2: Normalize video format (transcode exotic codecs to H.264/AAC)
       if (dbJobId) {
         await supabase.from('jobs').update({ progress: 15 }).eq('id', dbJobId);
       }
-      await job.updateProgress(15);
       console.log(`[Transcription] Checking video format for project ${projectId}`);
 
       const normalizedPath = await this.normalizeVideoFormat(videoPath, projectId);
@@ -114,14 +120,7 @@ export class TranscriptionProcessor extends WorkerHost {
         `ffmpeg -i "${safeVideoPath}" -vn -acodec libmp3lame -ar 16000 -ab 64k -y "${safeAudioPath}" 2>&1`
       );
 
-      // Step 3: Call Whisper API with word-level timestamps
-      if (dbJobId) {
-        await supabase.from('jobs').update({ progress: 40 }).eq('id', dbJobId);
-      }
-      await job.updateProgress(40);
-      console.log(`[Transcription] Calling Whisper API for project ${projectId}`);
-
-      // Step 3: Call Whisper API with word-level timestamps (with fallback)
+      // Step 4: Call Whisper API with word-level timestamps (with fallback)
       let transcription: any;
       try {
         transcription = await this.openai.audio.transcriptions.create({
@@ -132,9 +131,12 @@ export class TranscriptionProcessor extends WorkerHost {
         });
       } catch (apiError: any) {
         console.warn(`[Transcription] OpenAI Whisper failed: ${apiError.message}. Falling back to local mode.`);
-        // Local fallback: use FFmpeg silence detection + basic segmentation
-        // This is a degraded mode — no word-level timestamps, just segment detection
+        // ponytail: local fallback uses ffmpeg silencedetect — produces
+        // [Segmento N] placeholders with empty words. Marking completed
+        // without this flag would let clip-analysis run on garbage and
+        // return fake clips the user thinks are real analysis.
         transcription = await this.localTranscriptionFallback(audioPath, job);
+        transcriptionDegraded = true;
       }
 
       if (dbJobId) {
@@ -142,7 +144,7 @@ export class TranscriptionProcessor extends WorkerHost {
       }
       await job.updateProgress(70);
 
-      // Step 4: Convert Whisper output to SubtitleSegment[]
+      // Step 5: Convert Whisper output to SubtitleSegment[]
       const segments: SubtitleSegment[] = (transcription.segments || []).map((seg: any, segIdx: number) => {
         const words: SubtitleSegment['words'] = (seg.words || []).map((w: WhisperWord) => ({
           word: w.word,
@@ -166,7 +168,7 @@ export class TranscriptionProcessor extends WorkerHost {
         .from('subtitles')
         .insert({
           project_id: projectId,
-          clip_id: null, // project-level subtitles (covers full video)
+          clip_id: null,
           segments,
           language: transcription.language || 'unknown',
         });
@@ -177,19 +179,31 @@ export class TranscriptionProcessor extends WorkerHost {
         console.log(`[Transcription] Persisted ${segments.length} segments to subtitles table`);
       }
 
-      // Mark job as completed
+      // Mark job as completed (with degraded flag if fallback was used)
       if (dbJobId) {
         await supabase
           .from('jobs')
           .update({
             status: 'completed',
             progress: 100,
-            result: { segments_count: segments.length },
+            result: {
+              segments_count: segments.length,
+              degraded: transcriptionDegraded,
+            },
             updated_at: new Date().toISOString(),
           })
           .eq('id', dbJobId);
       }
-      // Step 5: Enqueue clip-analysis job via injected queue (reuses BullMQ connection)
+
+      // ponytail: skip clip-analysis when transcription is degraded.
+      // Running it on [Segmento N] placeholders would produce fake clips.
+      if (transcriptionDegraded) {
+        console.warn(`[Transcription] Skipping clip-analysis due to degraded transcription`);
+        await supabase.from('projects').update({ status: 'ready' }).eq('id', projectId);
+        return { segments };
+      }
+
+      // Step 6: Enqueue clip-analysis job via injected queue
       const analysisBullJob = await this.clipAnalysisQueue.add('analyze-clips', {
         projectId,
         videoUrl,

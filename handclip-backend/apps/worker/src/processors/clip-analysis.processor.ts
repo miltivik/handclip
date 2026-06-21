@@ -154,7 +154,7 @@ function parseAndValidateClips(content: string): ClipCandidate[] {
     .filter((clip: ClipCandidate): clip is ClipCandidate => clip.startTime < clip.endTime);
 }
 
-@Processor('clip-analysis')
+@Processor('clip-analysis', { lockDuration: 600000, lockRenewTime: 30000 })
 export class ClipAnalysisProcessor extends WorkerHost {
   constructor(private readonly supabaseService: SupabaseService) {
     super();
@@ -329,15 +329,23 @@ export class ClipAnalysisProcessor extends WorkerHost {
     console.warn(`[ClipAnalysis] All ${MAX_ATTEMPTS} attempts failed. Creating fallback clip from longest segment.`);
 
     const fallbackClips = this.createFallbackClip(projectId, transcriptionSegments);
-    await supabase.from('projects').update({ status: 'ready' }).eq('id', projectId);
-
+    // ponytail: mark the job as degraded (not failed) when fallback is used.
+    // The fallback creates a synthetic clip from the longest segment —
+    // it's a degraded result, not a real LLM analysis. Surfacing this
+    // via `result.degraded: true` lets the UI show a warning; the user
+    // can then retry or trim the segment manually.
     if (dbJobId) {
       await supabase
         .from('jobs')
         .update({
           status: 'completed',
           progress: 100,
-          result: { clips_count: fallbackClips.length, fallback: true, error: lastError?.message },
+          result: {
+            clips_count: fallbackClips.length,
+            fallback: true,
+            degraded: true,
+            error: lastError?.message,
+          },
           updated_at: new Date().toISOString(),
         })
         .eq('id', dbJobId);

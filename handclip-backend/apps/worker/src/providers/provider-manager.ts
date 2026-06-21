@@ -43,6 +43,10 @@ export class ProviderManager {
 
   private ensureProviders(): void {
     if (this.providers.length > 0) return;
+    // ponytail: anthropic removed — the OpenAI SDK was being constructed
+    // with baseURL=undefined for anthropic, so calls hit api.openai.com
+    // with an Anthropic Bearer and 401'd on every attempt. Re-add with
+    // @anthropic-ai/sdk when that becomes a real need.
     this.providers = [
       {
         name: 'openai',
@@ -50,13 +54,6 @@ export class ProviderManager {
         defaultModel: 'gpt-4o-mini',
         costPer1MInput: 0.15,
         costPer1MOutput: 0.60,
-      },
-      {
-        name: 'anthropic',
-        apiKey: process.env.ANTHROPIC_API_KEY || '',
-        defaultModel: 'claude-3-haiku-20240307',
-        costPer1MInput: 0.125,
-        costPer1MOutput: 1.25,
       },
       {
         name: 'openrouter',

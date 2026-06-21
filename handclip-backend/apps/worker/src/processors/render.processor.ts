@@ -1,13 +1,14 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnApplicationShutdown } from '@nestjs/common';
 import { Job } from 'bullmq';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { exec, spawn } from 'child_process';
+import { exec, spawn, type ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseService } from '../modules/supabase/supabase.service';
-import { incrementExportCount } from '../providers/export-counter';
+import { incrementExportCount, decrementExportCount } from '../providers/export-counter';
 import { validateTempPath } from '../utils/validate-path';
 import { EXPORT_PRESETS, MIN_CLIP_DURATION_SEC, MAX_CLIP_DURATION_SEC, validatePublicUrl } from '@handclip/shared';
 const execAsync = promisify(exec);
@@ -36,9 +37,22 @@ interface SubtitleSegment {
 
 
 @Processor('render', { lockDuration: 600000, lockRenewTime: 30000 })
-export class RenderProcessor extends WorkerHost {
+export class RenderProcessor extends WorkerHost implements OnApplicationShutdown {
+  // ponytail: track spawned FFmpeg children so SIGTERM can kill them; otherwise
+  // they keep transcoding after the worker exits and can fill the disk.
+  private readonly activeChildren = new Set<ChildProcess>();
+
   constructor(private readonly supabaseService: SupabaseService) {
     super();
+  }
+
+  async onApplicationShutdown(signal?: string): Promise<void> {
+    if (this.activeChildren.size === 0) return;
+    console.log(`[Render] Killing ${this.activeChildren.size} ffmpeg child(ren) on shutdown (${signal ?? 'no signal'})`);
+    for (const child of this.activeChildren) {
+      try { child.kill('SIGKILL'); } catch { /* already dead */ }
+    }
+    this.activeChildren.clear();
   }
 
   async process(job: Job<RenderJobData>): Promise<{ outputUrl: string }> {
@@ -134,24 +148,29 @@ export class RenderProcessor extends WorkerHost {
 
     try {
       await job.updateProgress(5);
-      // Step 1: Download video
-      let downloadUrl: string;
-      if (videoUrl.startsWith('http')) {
-        downloadUrl = await validatePublicUrl(videoUrl);
-      } else {
-        downloadUrl = videoUrl; // local file path
+      // ponytail: reject local paths. validatePublicUrl enforces HTTPS + blocks
+      // private/loopback/cloud-metadata IPs. The previous code allowed
+      // fs.copyFileSync of any local path — workers could read /etc/passwd
+      // or .env and pipe it to FFmpeg.
+      const downloadUrl = await validatePublicUrl(videoUrl);
+      const res = await fetch(downloadUrl);
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.startsWith('video/') && !contentType.startsWith('audio/')) {
+        throw new Error(`Unexpected content type: ${contentType}. Expected video/audio.`);
       }
-
-      if (downloadUrl.startsWith('http')) {
-        const res = await fetch(downloadUrl);
-        const contentType = res.headers.get('content-type') || '';
-        if (!contentType.startsWith('video/') && !contentType.startsWith('audio/')) {
-          throw new Error(`Unexpected content type: ${contentType}. Expected video/audio.`);
+      // Cap in-memory size to 600MB before write (the previous code used
+      // res.arrayBuffer() which is unbounded — 500MB file = 500MB heap).
+      const MAX_DOWNLOAD_BYTES = 600 * 1024 * 1024;
+      const chunks: Buffer[] = [];
+      let received = 0;
+      for await (const chunk of res.body!) {
+        received += chunk.length;
+        if (received > MAX_DOWNLOAD_BYTES) {
+          throw new Error(`Download exceeds ${MAX_DOWNLOAD_BYTES} bytes`);
         }
-        fs.writeFileSync(inputPath, Buffer.from(await res.arrayBuffer()));
-      } else {
-        fs.copyFileSync(downloadUrl, inputPath);
+        chunks.push(chunk as Buffer);
       }
+      fs.writeFileSync(inputPath, Buffer.concat(chunks));
       await job.updateProgress(15);
 
       // Step 2: Generate SRT subtitle file
@@ -302,25 +321,32 @@ export class RenderProcessor extends WorkerHost {
           .eq('id', dbJobId);
       }
 
-      // Send push notification
-      const API_BASE = process.env.API_URL || 'http://localhost:3000';
-      const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || '';
-      try {
-        await fetch(`${API_BASE}/api/notifications/push`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(INTERNAL_API_KEY ? { 'X-Internal-API-Key': INTERNAL_API_KEY } : {}),
-          },
-          body: JSON.stringify({
-            userId,
-            title: '¡Tu clip está listo!',
-            message: `El clip en formato ${preset} se ha exportado correctamente.`,
-            data: { projectId, exportId: dbExportId, type: 'export_complete', deepLink: `handclip://project/${projectId}/export?exportId=${dbExportId}` },
-          }),
-        });
-      } catch (err: any) {
-        console.warn(`[Render] Push notification failed (non-blocking): ${err.message}`);
+      // ponytail: skip push if dbExportId is undefined (DB write race).
+      // Without this, the deepLink has ?exportId=undefined and the mobile
+      // navigates to a 404. The export row still exists in the DB; the
+      // user just won't get a push for this one.
+      if (!dbExportId) {
+        console.warn(`[Render] dbExportId undefined for project ${projectId}; skipping push`);
+      } else {
+        const API_BASE = process.env.API_URL || 'http://localhost:3000';
+        const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || '';
+        try {
+          await fetch(`${API_BASE}/api/notifications/push`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(INTERNAL_API_KEY ? { 'X-Internal-API-Key': INTERNAL_API_KEY } : {}),
+            },
+            body: JSON.stringify({
+              userId,
+              title: '¡Tu clip está listo!',
+              message: `El clip en formato ${preset} se ha exportado correctamente.`,
+              data: { projectId, exportId: dbExportId, type: 'export_complete', deepLink: `handclip://project/${projectId}/export?exportId=${dbExportId}` },
+            }),
+          });
+        } catch (err: any) {
+          console.warn(`[Render] Push notification failed (non-blocking): ${err.message}`);
+        }
       }
 
       await job.updateProgress(100);
@@ -330,10 +356,15 @@ export class RenderProcessor extends WorkerHost {
     } catch (err: any) {
       console.error(`[Render] Failed for project ${projectId}: ${err.message}`);
 
+      // ponytail: fair-fail. If we already incremented the export counter
+      // but the render didn't produce a deliverable, refund the user.
+      // Without this, a free-tier user loses 1 export per failed render.
+      await decrementExportCount(userId, supabase).catch((e) =>
+        console.warn(`[Render] Rollback failed: ${e?.message}`),
+      );
+
       // Mark job as failed. Log full error server-side, store generic
-      // message in DB so the API doesn't leak internal paths/state
-      // (FFmpeg errors commonly include /tmp/<uuid> paths, codec names,
-      // and env hints).
+      // message in DB so the API doesn't leak internal paths/state.
       if (dbJobId) {
         await supabase
           .from('jobs')
@@ -472,11 +503,22 @@ export class RenderProcessor extends WorkerHost {
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const child = spawn('ffmpeg', args, { timeout: 300000 });
+      this.activeChildren.add(child);
+      child.on('close', () => this.activeChildren.delete(child));
+      child.on('error', () => this.activeChildren.delete(child));
 
-      let stderr = '';
+      // ponytail: cap stderr buffer to 4KB. The previous code accumulated
+      // the entire FFmpeg verbose log in memory; a 30-min render with
+      // libx264 verbose can hit hundreds of MB.
+      const stderrChunks: Buffer[] = [];
+      let stderrBytes = 0;
+      const STDERR_CAP = 4 * 1024;
 
       child.stderr.on('data', (data: Buffer) => {
-        stderr += data.toString();
+        if (stderrBytes < STDERR_CAP) {
+          stderrChunks.push(data);
+          stderrBytes += data.length;
+        }
         const match = data.toString().match(/time=(\d+):(\d+):(\d+\.\d+)/);
         if (match && totalDuration > 0) {
           const seconds =
@@ -492,7 +534,8 @@ export class RenderProcessor extends WorkerHost {
         if (code === 0) {
           resolve();
         } else {
-          reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-500)}`));
+          const tail = Buffer.concat(stderrChunks).toString().slice(-500);
+          reject(new Error(`FFmpeg exited with code ${code}: ${tail}`));
         }
       });
 

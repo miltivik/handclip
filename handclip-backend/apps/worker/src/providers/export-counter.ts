@@ -24,3 +24,21 @@ export async function incrementExportCount(
   const result = data as unknown as { allowed: boolean; count: number };
   return { allowed: result.allowed, count: result.count };
 }
+
+/**
+ * Refund one export slot for a user. Called by the render processor when
+ * the increment was successful but the render failed before producing a
+ * deliverable (network, FFmpeg error, etc). Without this, a free-tier user
+ * loses 1 export per failed render.
+ */
+export async function decrementExportCount(
+  userId: string,
+  supabase: SupabaseClient,
+): Promise<void> {
+  const { error } = await supabase.rpc('decrement_export_count', {
+    user_id: userId,
+  });
+  if (error) {
+    console.error('[ExportCounter] Rollback RPC failed:', error.message);
+  }
+}

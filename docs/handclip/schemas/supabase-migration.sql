@@ -214,6 +214,24 @@ begin
 end;
 $$;
 
+-- 7b. Rollback: refund one export slot (for fair-fail in render processor)
+create or replace function decrement_export_count(user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  update public.profiles
+  set exports_this_month = greatest(exports_this_month - 1, 0)
+  where id = user_id;
+end;
+$$;
+
+revoke execute on function decrement_export_count(uuid) from public;
+grant execute on function decrement_export_count(uuid) to authenticated;
+
+
 -- Lock down execute permission: only authenticated users may call the quota RPC
 revoke execute on function increment_export_count(uuid) from public;
 grant execute on function increment_export_count(uuid) to authenticated;

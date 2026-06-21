@@ -18,6 +18,15 @@ import { HealthModule } from './health.module';
         password: process.env.REDIS_PASSWORD || undefined,
         maxRetriesPerRequest: null,
       },
+      // ponytail: default options applied to every job that doesn't
+      // override them. 3 attempts with exponential backoff for transient
+      // 5xx/429/timeout; retention caps prevent Redis bloat.
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 30_000 },
+        removeOnComplete: { count: 100 },
+        removeOnFail: { count: 500 },
+      },
     }),
     SupabaseModule,
     ProcessorsModule,
