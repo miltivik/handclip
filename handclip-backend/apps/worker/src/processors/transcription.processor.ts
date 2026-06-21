@@ -8,9 +8,34 @@ import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-const execAsync = promisify(exec);
+import { spawn } from 'child_process';
+
+/** Run a command via spawn, capturing stdout+stderr. Rejects on non-zero exit. */
+function runCommand(
+  cmd: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { timeout: timeoutMs });
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    child.stdout.on('data', (d: Buffer) => stdoutChunks.push(d));
+    child.stderr.on('data', (d: Buffer) => stderrChunks.push(d));
+    child.on('error', (err) => reject(new Error(`${cmd} spawn failed: ${err.message}`)));
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve({
+          stdout: Buffer.concat(stdoutChunks).toString(),
+          stderr: Buffer.concat(stderrChunks).toString(),
+        });
+      } else {
+        const tail = Buffer.concat(stderrChunks).toString().slice(-500);
+        reject(new Error(`${cmd} exited with code ${code}: ${tail}`));
+      }
+    });
+  });
+}
 
 interface WhisperWord {
   word: string;
@@ -116,19 +141,30 @@ export class TranscriptionProcessor extends WorkerHost {
 
       const safeVideoPath = validateTempPath(videoPath);
       const safeAudioPath = validateTempPath(audioPath);
-      await execAsync(
-        `ffmpeg -i "${safeVideoPath}" -vn -acodec libmp3lame -ar 16000 -ab 64k -y "${safeAudioPath}" 2>&1`
+      // ponytail: shell-free spawn; previous execAsync was template-string
+      await runCommand(
+        'ffmpeg',
+        ['-i', safeVideoPath, '-vn', '-acodec', 'libmp3lame', '-ar', '16000', '-ab', '64k', '-y', safeAudioPath],
+        60000,
       );
 
       // Step 4: Call Whisper API with word-level timestamps (with fallback)
       let transcription: any;
       try {
-        transcription = await this.openai.audio.transcriptions.create({
-          file: fs.createReadStream(audioPath),
-          model: 'whisper-1',
-          response_format: 'verbose_json',
-          timestamp_granularities: ['word'],
-        });
+        // ponytail: OpenAI SDK has no client-side timeout — race against a
+        // 60s ceiling so a hung request can't stall the worker indefinitely.
+        const TIMEOUT_MS = 60_000;
+        transcription = await Promise.race([
+          this.openai.audio.transcriptions.create({
+            file: fs.createReadStream(audioPath),
+            model: 'whisper-1',
+            response_format: 'verbose_json',
+            timestamp_granularities: ['word'],
+          }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Whisper timeout')), TIMEOUT_MS),
+          ),
+        ]);
       } catch (apiError: any) {
         console.warn(`[Transcription] OpenAI Whisper failed: ${apiError.message}. Falling back to local mode.`);
         // ponytail: local fallback uses ffmpeg silencedetect — produces
@@ -272,17 +308,21 @@ export class TranscriptionProcessor extends WorkerHost {
     projectId: string,
   ): Promise<string | null> {
     try {
-      const { stdout } = await execAsync(
-        `ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "${validateTempPath(inputPath)}"`,
-        { timeout: 15000 },
+      // ponytail: shell-free spawn; previous execAsync was template-string
+      const { stdout } = await runCommand(
+        'ffprobe',
+        ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name', '-of', 'default=noprint_wrappers=1:nokey=1', validateTempPath(inputPath)],
+        15000,
       );
       const videoCodec = stdout.trim();
 
       let audioCodec = '';
       try {
-        const { stdout: audioOut } = await execAsync(
-          `ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "${validateTempPath(inputPath)}"`,
-          { timeout: 10000 },
+        // ponytail: shell-free spawn; previous execAsync was template-string
+        const { stdout: audioOut } = await runCommand(
+          'ffprobe',
+          ['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=codec_name', '-of', 'default=noprint_wrappers=1:nokey=1', validateTempPath(inputPath)],
+          10000,
         );
         audioCodec = audioOut.trim();
       } catch {
@@ -303,9 +343,11 @@ export class TranscriptionProcessor extends WorkerHost {
       const normalizedPath = path.join(os.tmpdir(), `${projectId}-normalized.mp4`);
       validateTempPath(normalizedPath);
 
-      await execAsync(
-        `ffmpeg -i "${validateTempPath(inputPath)}" -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k -y "${normalizedPath}" 2>&1`,
-        { timeout: 300000 },
+      // ponytail: shell-free spawn; previous execAsync was template-string
+      await runCommand(
+        'ffmpeg',
+        ['-i', validateTempPath(inputPath), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-y', normalizedPath],
+        300000,
       );
 
       console.log(`[Transcription] Normalization complete: ${normalizedPath}`);
@@ -322,14 +364,18 @@ export class TranscriptionProcessor extends WorkerHost {
   ): Promise<{ segments: any[]; language: string }> {
     // Use FFmpeg silencedetect to find speech segments
     // This provides rough timestamps without actual transcription
-    const { stdout } = await execAsync(
-      `ffmpeg -i "${audioPath}" -af "silencedetect=n=-30dB:d=0.5" -f null - 2>&1`,
-      { timeout: 60000 },
+    // ponytail: shell-free spawn; previous execAsync was template-string
+    // ffmpeg silencedetect writes to stderr, not stdout — read .stderr.
+    const { stderr } = await runCommand(
+      'ffmpeg',
+      ['-i', audioPath, '-af', 'silencedetect=n=-30dB:d=0.5', '-f', 'null', '-'],
+      60000,
     );
     // Parse silence_start/silence_end from FFmpeg output
+    const lines = stderr.split('\n');
     const silenceStarts: number[] = [];
     const silenceEnds: number[] = [];
-    const lines = stdout.split('\n');
+
     for (const line of lines) {
       const startMatch = line.match(/silence_start: ([\d.]+)/);
       const endMatch = line.match(/silence_end: ([\d.]+)/);
