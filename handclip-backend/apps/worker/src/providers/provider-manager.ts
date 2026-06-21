@@ -17,6 +17,9 @@ export interface StageTask {
   userPrompt: string;
   maxTokens?: number;
   temperature?: number;
+  // Try this provider first regardless of cost order. Bypasses the
+  // rate-limit filter (caller is explicitly asking for it).
+  forceProvider?: ProviderName;
 }
 
 export interface ProviderResult {
@@ -37,27 +40,6 @@ export class ProviderManager {
   private rateLimits = new Map<string, { count: number; resetAt: number }>();
   private readonly MAX_RPM = 50;
   private providers: ProviderConfig[] = [];
-  // ponytail: saves original env-derived key per provider so disableBYOK can
-  // restore. Race window remains if two clip-analysis jobs force different
-  // BYOKs concurrently — not fixed here, defer to per-call refactor.
-  private byokOriginalKeys = new Map<ProviderName, string>();
-
-  enableBYOK(provider: ProviderName, apiKey: string) {
-    const p = this.providers.find((pr) => pr.name === provider);
-    if (!p) return;
-    if (!this.byokOriginalKeys.has(provider)) {
-      this.byokOriginalKeys.set(provider, p.apiKey);
-    }
-    p.apiKey = apiKey;
-  }
-
-  disableBYOK() {
-    for (const [name, originalKey] of this.byokOriginalKeys) {
-      const p = this.providers.find((pr) => pr.name === name);
-      if (p) p.apiKey = originalKey;
-    }
-    this.byokOriginalKeys.clear();
-  }
 
   private ensureProviders(): void {
     if (this.providers.length > 0) return;
@@ -91,7 +73,17 @@ export class ProviderManager {
     this.ensureProviders();
     const ranked = this.rankProviders(task.stage);
 
-    for (const provider of ranked) {
+    // If a forced provider is requested, try it first (bypassing the
+    // rate-limit filter) and fall through to the cost-ranked list on
+    // retryable failure.
+    const forced = task.forceProvider
+      ? this.providers.find((p) => p.name === task.forceProvider)
+      : null;
+    const ordered = forced
+      ? [forced, ...ranked.filter((p) => p.name !== task.forceProvider)]
+      : ranked;
+
+    for (const provider of ordered) {
       if (!provider.apiKey) {
         console.warn(`[ProviderManager] ${provider.name}: sin API key, omitiendo`);
         continue;

@@ -244,22 +244,16 @@ export class ClipAnalysisProcessor extends WorkerHost {
       try {
         // Attempt 0: default prompt
         // Attempt 1: strict prompt
-        // Attempt 2: strict prompt + force expensive provider first
+        // Attempt 2: strict prompt + force Anthropic first (most capable for structured JSON)
         if (attempt === 1) {
           task.userPrompt = buildUserPrompt(transcriptionSegments) + '\n\n' + CLIP_ANALYSIS_STRICT_PROMPT;
         }
         if (attempt === 2) {
-          // Force Anthropic first (most capable for structured JSON)
-          providerManager.enableBYOK('anthropic', process.env.ANTHROPIC_API_KEY || '');
           task.userPrompt = buildUserPrompt(transcriptionSegments) + '\n\n' + CLIP_ANALYSIS_STRICT_PROMPT;
+          task.forceProvider = 'anthropic';
         }
 
         const result = await providerManager.callWithFallback(task);
-
-        // Reset BYOK after forced provider attempt
-        if (attempt === 2) {
-          providerManager.disableBYOK();
-        }
 
         if (dbJobId) {
           await supabase.from('jobs').update({ progress: 60 }).eq('id', dbJobId);
@@ -322,8 +316,6 @@ export class ClipAnalysisProcessor extends WorkerHost {
         return { clips };
       } catch (err: any) {
         lastError = err;
-        // Reset BYOK on failure
-        providerManager.disableBYOK();
         console.warn(`[ClipAnalysis] Attempt ${attempt + 1}/${MAX_ATTEMPTS} failed: ${err.message}`);
 
         if (dbJobId) {
