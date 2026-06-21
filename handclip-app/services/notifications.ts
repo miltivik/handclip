@@ -60,16 +60,3 @@ export async function registerForPushNotifications(userId: string): Promise<stri
   return token;
 }
 
-export function addNotificationListener(
-  onNotification: (notification: Notifications.Notification) => void,
-): () => void {
-  const sub = Notifications.addNotificationReceivedListener(onNotification);
-  return () => sub.remove();
-}
-
-export function addNotificationResponseListener(
-  onResponse: (response: Notifications.NotificationResponse) => void,
-): () => void {
-  const sub = Notifications.addNotificationResponseReceivedListener(onResponse);
-  return () => sub.remove();
-}
