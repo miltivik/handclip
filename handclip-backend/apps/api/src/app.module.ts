@@ -2,7 +2,7 @@ import { AuthGuard } from './guards/auth.guard';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerGuard, seconds } from '@nestjs/throttler';
 import { BullModule } from '@nestjs/bullmq';
 import { SupabaseModule } from './modules/supabase/supabase.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -20,7 +20,7 @@ import { ExportsModule } from './modules/exports/exports.module';
       envFilePath: '.env',
     }),
     ThrottlerModule.forRoot([{
-      ttl: 60000,
+      ttl: seconds(60),
       limit: 100,
     }]),
     BullModule.forRoot({
