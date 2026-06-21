@@ -32,6 +32,12 @@ WORKDIR /app
 # Copy built artifacts and production node_modules
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/node_modules ./node_modules
+# ponytail: strip devDeps. The build stage ran pnpm install --frozen-
+# lockfile which pulled devDependencies (typescript, @nestjs/cli,
+# ts-node, @types/*, eslint, turbo, etc). Without this, the production
+# image ships them — bloats the image and enlarges the supply-chain
+# surface.
+RUN pnpm prune --prod
 
 USER node
 

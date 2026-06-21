@@ -31,10 +31,11 @@ RUN corepack enable pnpm
 
 WORKDIR /app
 
-# Copy built artifacts and production node_modules
 COPY --from=build /app/apps/worker/dist ./apps/worker/dist
 COPY --from=build /app/node_modules ./node_modules
 
-USER node
+# ponytail: strip devDeps. See API Dockerfile for the rationale.
+RUN pnpm prune --prod
 
+USER node
 CMD ["node", "apps/worker/dist/main"]

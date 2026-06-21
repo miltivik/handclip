@@ -1,0 +1,39 @@
+# Build context hygiene — prevents sensitive / irrelevant files
+# from ending up in the Docker image or being uploaded as build secrets.
+
+# Version control
+.git
+.gitignore
+
+# Dependencies (pnpm install runs inside the image)
+node_modules
+.pnpm-store
+
+# Build artifacts (the build stage produces these)
+dist
+*.tsbuildinfo
+.turbo
+
+# Local env files (NEVER bake secrets into images)
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test coverage
+coverage
+.nyc_output
+
+# Editor / OS junk
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Project-internal: durable memory directory (untracked but present
+# on disk in dev environments — never bake it into images)
+memory

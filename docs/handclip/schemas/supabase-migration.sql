@@ -95,6 +95,17 @@ create index if not exists idx_clips_project_id on public.clips(project_id);
 create index if not exists idx_exports_project_id on public.exports(project_id);
 create index if not exists idx_jobs_project_id on public.jobs(project_id);
 
+-- Composite indexes for hot query paths. The worker polls jobs by
+-- project_id + status; mobile lists exports/clips by project_id +
+-- status. Without these, every query hits a sequential scan filtered
+-- on the second column.
+create index if not exists idx_jobs_project_status on public.jobs(project_id, status);
+create index if not exists idx_exports_project_status on public.exports(project_id, status);
+create index if not exists idx_clips_project_status on public.clips(project_id, status);
+-- BullMQ ID lookup is constant-time (jobsService.getJob joins BullMQ
+-- by this column); the existing primary-key index on id doesn't help.
+create index if not exists idx_jobs_bullmq_id on public.jobs(bullmq_id);
+
 -- 4. TRIGGER para profiles (crear perfil al registrarse)
 create or replace function public.handle_new_user()
 returns trigger as $$

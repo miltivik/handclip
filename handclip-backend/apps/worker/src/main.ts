@@ -20,15 +20,18 @@ async function bootstrap() {
   console.log(`HandClip Worker running on http://localhost:${port}`);
   console.log(`Health check: http://localhost:${port}/health`);
 
-  const shutdown = async (signal: string) => {
+  // ponytail: SHUTDOWN_TIMEOUT_MS is 30s (not 10s like API) because
+  // ffmpeg renders can run for 5+ minutes. Nest's app.close() waits
+  // for in-flight jobs to finish — we'd rather wait than corrupt a
+  // video by killing FFmpeg mid-encode. The force-exit kicks in at
+  // 30s to bound the shutdown.
+  const SHUTDOWN_TIMEOUT_MS = 30_000;
+  const shutdown = async (signal: NodeJS.Signals) => {
     console.log(`${signal} received, shutting down gracefully (max ${SHUTDOWN_TIMEOUT_MS / 1000}s)...`);
-
-    // Force exit if graceful shutdown takes too long
     const forceExit = setTimeout(() => {
       console.error(`Graceful shutdown timed out after ${SHUTDOWN_TIMEOUT_MS / 1000}s, forcing exit`);
       process.exit(1);
     }, SHUTDOWN_TIMEOUT_MS);
-
     try {
       await app.close();
       console.log('Worker shut down gracefully');
@@ -39,9 +42,19 @@ async function bootstrap() {
       process.exit(0);
     }
   };
+  for (const signal of ['SIGTERM', 'SIGINT'] as NodeJS.Signals[]) {
+    process.on(signal, () => shutdown(signal));
+  }
 
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
+  // ponytail: uncaughtException / unhandledRejection. The render
+  // processor's ffmpeg child tracking + onApplicationShutdown fires
+  // for clean exits; this is the safety net for crashes outside
+  // the Nest lifecycle (e.g. a stray import-time throw).
+  process.on('uncaughtException', (err) => {
+    console.error('[uncaughtException]', err);
+    shutdown('SIGTERM');
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('[unhandledRejection]', reason);
+  });
 }
-
-bootstrap();
