@@ -20,3 +20,4 @@ export * from './constants';
 
 // Utils
 export { validatePublicUrl } from './utils/validate-url';
+export { redactEmail, redactPushToken, redactUserId } from './utils/redact';

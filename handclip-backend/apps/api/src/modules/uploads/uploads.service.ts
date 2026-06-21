@@ -178,7 +178,9 @@ export class UploadsService implements OnModuleDestroy {
       .upload(destinationPath, fileBuffer, {
         contentType: 'video/' + extension.replace('video/', ''),
         upsert: true,
-      });
+        // ponytail: cap upload at 120s; createSignedUrl/getPublicUrl are fast metadata ops and don't need timeouts
+        signal: AbortSignal.timeout(120_000),
+      } as { contentType: string; upsert: boolean; signal: AbortSignal });
 
     if (error) {
       console.error('Failed to upload file to storage:', error);

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { redactUserId, redactPushToken } from '@handclip/shared';
 
 @Injectable()
 export class NotificationsService {
@@ -18,7 +19,8 @@ export class NotificationsService {
 
     const pushToken = profile?.expo_push_token;
     if (!pushToken) {
-      console.log(`[Notifications] No push token for user ${userId}`);
+      // ponytail: redact userId
+      console.log(`[Notifications] No push token for user ${redactUserId(userId)}`);
       return;
     }
 
@@ -41,7 +43,9 @@ export class NotificationsService {
         body: JSON.stringify(message),
       });
       const result = await response.json();
-      console.log(`[Notifications] Push sent to ${userId}:`, JSON.stringify(result));
+      // ponytail: redact userId + any ExponentPushToken[...] that came back in the response
+      const safeResult = JSON.stringify(result).replace(/ExponentPushToken\[[^\]]+\]/g, (m) => redactPushToken(m));
+      console.log(`[Notifications] Push sent to ${redactUserId(userId)}:`, safeResult);
     } catch (err: any) {
       console.error(`[Notifications] Failed to send push: ${err.message}`);
     }

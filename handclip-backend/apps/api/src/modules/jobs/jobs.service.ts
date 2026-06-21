@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { JobStatusDto, ExportPreset } from '@handclip/shared';
+import { JobStatusDto, ExportPreset, redactEmail } from '@handclip/shared';
 import { SupabaseService } from '../supabase/supabase.service';
 
 interface AnalysisJob {
@@ -60,7 +60,8 @@ export class JobsService {
       .single();
 
     if (exportError || !exportRow) {
-      console.error('Failed to create export record:', exportError);
+    // ponytail: log code + email-scrubbed message; defense in depth for any value Supabase embeds
+    console.error('Failed to create export record:', exportError?.code ?? 'unknown', String(exportError?.message ?? '').replace(/[\w.+-]+@[\w.-]+/g, redactEmail));
       throw new Error('Failed to create export record');
     }
 
@@ -84,7 +85,8 @@ export class JobsService {
       .single();
 
     if (error || !jobsRow) {
-      console.error('Failed to insert render job:', error);
+    // ponytail: log code + email-scrubbed message
+    console.error('Failed to insert render job:', error?.code ?? 'unknown', String(error?.message ?? '').replace(/[\w.+-]+@[\w.-]+/g, redactEmail));
       throw new Error('Failed to create render job');
     }
 
@@ -128,7 +130,8 @@ export class JobsService {
       .single();
 
     if (transError || !transRow) {
-      console.error('Failed to create transcription job:', transError);
+    // ponytail: log code + email-scrubbed message
+    console.error('Failed to create transcription job:', transError?.code ?? 'unknown', String(transError?.message ?? '').replace(/[\w.+-]+@[\w.-]+/g, redactEmail));
       throw new Error('Failed to create transcription job');
     }
 
@@ -146,7 +149,8 @@ export class JobsService {
       .single();
 
     if (analysisError || !analysisRow) {
-      console.error('Failed to create clip-analysis job:', analysisError);
+    // ponytail: log code + email-scrubbed message
+    console.error('Failed to create clip-analysis job:', analysisError?.code ?? 'unknown', String(analysisError?.message ?? '').replace(/[\w.+-]+@[\w.-]+/g, redactEmail));
       throw new Error('Failed to create clip-analysis job');
     }
 
