@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useAuthStore } from '../../stores/auth.store';
+import { useGoogleAuth } from '../../hooks/useGoogleAuth';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -21,8 +22,8 @@ export default function LoginScreen() {
   const [magicLinkSent, setMagicLinkSent] = useState(false);
 
   const signIn = useAuthStore((state) => state.signIn);
-  const signInWithGoogle = useAuthStore((state) => state.signInWithGoogle);
   const signInWithMagicLink = useAuthStore((state) => state.signInWithMagicLink);
+  const promptGoogle = useGoogleAuth();
 
   const handleSignIn = async () => {
     if (!email || !password) {
@@ -45,7 +46,7 @@ export default function LoginScreen() {
     setLoading(true);
     setErrorMessage('');
     try {
-      await signInWithGoogle();
+      await promptGoogle();
     } catch (error: any) {
       setErrorMessage(error.message || 'Error al iniciar con Google');
     } finally {
@@ -188,12 +189,12 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 32,
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#1a1a1a',
+    color: '#111827',
   },
   subtitle: {
     fontSize: 16,
@@ -210,38 +211,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#374151',
-    marginBottom: 6,
+    marginBottom: 8,
   },
   input: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 10,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
     padding: 14,
     fontSize: 16,
-    color: '#1a1a1a',
-    backgroundColor: '#F9FAFB',
+    color: '#111827',
   },
   errorText: {
     color: '#DC2626',
     fontSize: 14,
-    marginBottom: 16,
+    marginBottom: 12,
     textAlign: 'center',
   },
   successText: {
     color: '#059669',
     fontSize: 14,
-    marginBottom: 16,
+    marginBottom: 12,
     textAlign: 'center',
-    backgroundColor: '#ECFDF5',
-    padding: 12,
-    borderRadius: 8,
   },
   button: {
-    backgroundColor: '#1a1a1a',
-    paddingVertical: 16,
-    borderRadius: 10,
+    backgroundColor: '#4F46E5',
+    borderRadius: 8,
+    padding: 14,
     alignItems: 'center',
-    marginBottom: 12,
+    marginTop: 8,
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -253,12 +249,12 @@ const styles = StyleSheet.create({
   },
   googleButton: {
     backgroundColor: '#FFFFFF',
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: '#D1D5DB',
-    marginBottom: 12,
+    borderRadius: 8,
+    padding: 14,
+    alignItems: 'center',
+    marginTop: 12,
   },
   googleButtonText: {
     color: '#374151',
@@ -266,24 +262,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   magicLinkButton: {
-    paddingVertical: 12,
+    padding: 14,
     alignItems: 'center',
-    marginBottom: 20,
+    marginTop: 8,
   },
   magicLinkText: {
-    color: '#6366F1',
+    color: '#4F46E5',
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   linkContainer: {
     alignItems: 'center',
   },
   linkText: {
-    fontSize: 14,
     color: '#6B7280',
+    fontSize: 14,
   },
   linkTextBold: {
-    color: '#1a1a1a',
+    color: '#4F46E5',
     fontWeight: '600',
   },
 });

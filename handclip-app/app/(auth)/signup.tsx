@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useAuthStore } from '../../stores/auth.store';
+import { useGoogleAuth } from '../../hooks/useGoogleAuth';
 
 export default function SignupScreen() {
   const [email, setEmail] = useState('');
@@ -21,7 +22,7 @@ export default function SignupScreen() {
   const [errorMessage, setErrorMessage] = useState('');
 
   const signUp = useAuthStore((state) => state.signUp);
-  const signInWithGoogle = useAuthStore((state) => state.signInWithGoogle);
+  const promptGoogle = useGoogleAuth();
 
   const handleSignUp = async () => {
     if (!email || !password || !confirmPassword) {
@@ -54,7 +55,7 @@ export default function SignupScreen() {
     setLoading(true);
     setErrorMessage('');
     try {
-      await signInWithGoogle();
+      await promptGoogle();
     } catch (error: any) {
       setErrorMessage(error.message || 'Error al registrarse con Google');
     } finally {

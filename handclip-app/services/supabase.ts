@@ -28,4 +28,15 @@ export async function handleAuthUrl(url: string) {
   return { data, error };
 }
 
+// Google sign-in (option A: native SDK -> id_token -> Supabase).
+// Call with the id_token returned by expo-auth-session's Google.useAuthRequest hook.
+export async function signInWithGoogleIdToken(idToken: string) {
+  const { data, error } = await supabase.auth.signInWithIdToken({
+    provider: 'google',
+    token: idToken,
+  });
+  if (error) throw error;
+  return data;
+}
+
 export default supabase;
