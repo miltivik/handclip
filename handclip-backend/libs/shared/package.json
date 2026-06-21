@@ -12,7 +12,6 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@handclip/configs": "workspace:*",
     "typescript": "^5.7.3"
   }
 }

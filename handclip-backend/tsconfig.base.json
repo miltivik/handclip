@@ -26,7 +26,6 @@
     "paths": {
       "@handclip/shared": ["./libs/shared/src"],
       "@handclip/shared/*": ["./libs/shared/src/*"],
-      "@handclip/configs": ["./packages/configs"]
     }
   },
   "exclude": ["node_modules", "dist"]
