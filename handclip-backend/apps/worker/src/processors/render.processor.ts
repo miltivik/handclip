@@ -11,6 +11,10 @@ import { SupabaseService } from '../modules/supabase/supabase.service';
 import { incrementExportCount, decrementExportCount } from '../providers/export-counter';
 import { validateTempPath } from '../utils/validate-path';
 import { EXPORT_PRESETS, MIN_CLIP_DURATION_SEC, MAX_CLIP_DURATION_SEC, validatePublicUrl } from '@handclip/shared';
+// ponytail: local push-token redaction. The shared redactPushToken isn't in
+// @handclip/shared yet (RedactPII subagent is adding it). Drop-in: token -> 8 chars + '...'.
+const redactPushToken = (token: string | null | undefined): string =>
+  token ? `${token.slice(0, 8)}...` : '(none)';
 const execAsync = promisify(exec);
 interface RenderJobData {
   projectId: string;
@@ -182,8 +186,21 @@ export class RenderProcessor extends WorkerHost implements OnApplicationShutdown
       // Step 3: Download music if provided
       if (musicUrl && musicPath) {
         const safeMusicUrl = await validatePublicUrl(musicUrl);
-        const res = await fetch(safeMusicUrl);
-        fs.writeFileSync(musicPath, Buffer.from(await res.arrayBuffer()));
+        // ponytail: same MAX_DOWNLOAD_BYTES cap + 60s timeout as the video
+        // download. Music files are smaller but a hostile server can stream
+        // forever without these guards.
+        const MAX_MUSIC_BYTES = 600 * 1024 * 1024;
+        const res = await fetch(safeMusicUrl, { signal: AbortSignal.timeout(60_000) });
+        const musicChunks: Buffer[] = [];
+        let musicReceived = 0;
+        for await (const chunk of res.body!) {
+          musicReceived += chunk.length;
+          if (musicReceived > MAX_MUSIC_BYTES) {
+            throw new Error(`Music download exceeds ${MAX_MUSIC_BYTES} bytes`);
+          }
+          musicChunks.push(chunk as Buffer);
+        }
+        fs.writeFileSync(musicPath, Buffer.concat(musicChunks));
       }
 
       await job.updateProgress(25);
@@ -331,7 +348,7 @@ export class RenderProcessor extends WorkerHost implements OnApplicationShutdown
         const API_BASE = process.env.API_URL || 'http://localhost:3000';
         const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || '';
         try {
-          await fetch(`${API_BASE}/api/notifications/push`, {
+          const pushRes = await fetch(`${API_BASE}/api/notifications/push`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -344,6 +361,10 @@ export class RenderProcessor extends WorkerHost implements OnApplicationShutdown
               data: { projectId, exportId: dbExportId, type: 'export_complete', deepLink: `handclip://project/${projectId}/export?exportId=${dbExportId}` },
             }),
           });
+          // ponytail: log response with push-token redaction. The internal API
+          // may echo back the Expo push token in the body.
+          const pushBody = await pushRes.text();
+          console.log(`[Render] Push response (${pushRes.status}): ${redactPushToken(pushBody)}`);
         } catch (err: any) {
           console.warn(`[Render] Push notification failed (non-blocking): ${err.message}`);
         }
