@@ -37,14 +37,26 @@ export class ProviderManager {
   private rateLimits = new Map<string, { count: number; resetAt: number }>();
   private readonly MAX_RPM = 50;
   private providers: ProviderConfig[] = [];
+  // ponytail: saves original env-derived key per provider so disableBYOK can
+  // restore. Race window remains if two clip-analysis jobs force different
+  // BYOKs concurrently — not fixed here, defer to per-call refactor.
+  private byokOriginalKeys = new Map<ProviderName, string>();
 
   enableBYOK(provider: ProviderName, apiKey: string) {
     const p = this.providers.find((pr) => pr.name === provider);
-    if (p) p.apiKey = apiKey;
+    if (!p) return;
+    if (!this.byokOriginalKeys.has(provider)) {
+      this.byokOriginalKeys.set(provider, p.apiKey);
+    }
+    p.apiKey = apiKey;
   }
 
   disableBYOK() {
-    // No state to reset — provider keys are mutated in place by enableBYOK.
+    for (const [name, originalKey] of this.byokOriginalKeys) {
+      const p = this.providers.find((pr) => pr.name === name);
+      if (p) p.apiKey = originalKey;
+    }
+    this.byokOriginalKeys.clear();
   }
 
   private ensureProviders(): void {

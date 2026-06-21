@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { timingSafeEqual } from 'crypto';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { SupabaseService } from '../modules/supabase/supabase.service';
 
@@ -27,12 +28,13 @@ export class AuthGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest();
 
-    // Allow internal API key as alternative auth (for worker-to-API calls)
+    // Allow internal API key as alternative auth (for worker→API calls).
+    // Use timingSafeEqual to prevent length/content timing leakage.
     const internalKey = request.headers['x-internal-api-key'] as string | undefined;
     const configuredKey = process.env.INTERNAL_API_KEY;
-    if (configuredKey && internalKey === configuredKey) {
+    if (configuredKey && internalKey && safeEqual(internalKey, configuredKey)) {
       request.user = { id: 'worker', role: 'internal' };
-      request.token = ''; // no JWT for internal calls
+      request.token = '';
       return true;
     }
 
@@ -62,4 +64,16 @@ export class AuthGuard implements CanActivate {
     request.token = token;
     return true;
   }
+}
+
+function safeEqual(a: string, b: string): boolean {
+  // Constant-time comparison: normalize length, then compare buffers.
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  if (aBuf.length !== bBuf.length) {
+    // Still do a dummy compare so total time doesn't reveal length alone.
+    timingSafeEqual(aBuf, aBuf);
+    return false;
+  }
+  return timingSafeEqual(aBuf, bBuf);
 }

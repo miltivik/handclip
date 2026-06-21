@@ -1,5 +1,4 @@
-// Validate required env vars
-const REQUIRED_VARS = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'REDIS_HOST'];
+const REQUIRED_VARS = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'REDIS_HOST', 'INTERNAL_API_KEY'];
 const missing = REQUIRED_VARS.filter((v) => !process.env[v]);
 if (missing.length > 0) {
   console.error(`Missing required env vars: ${missing.join(', ')}`);
