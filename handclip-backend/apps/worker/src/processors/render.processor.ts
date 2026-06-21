@@ -353,8 +353,7 @@ export class RenderProcessor extends WorkerHost {
           .update({ status: 'failed' })
           .eq('id', dbExportId);
       }
-
-      throw err;
+      throw new Error('Render failed');
     } finally {
       // Cleanup temp files
       for (const f of [inputPath, srtPath, musicPath, outputPath]) {

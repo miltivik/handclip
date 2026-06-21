@@ -241,8 +241,7 @@ export class TranscriptionProcessor extends WorkerHost {
         .from('projects')
         .update({ status: 'failed' })
         .eq('id', projectId);
-
-      throw err;
+      throw new Error('Transcription failed');
     } finally {
       // Cleanup temp files
       try { fs.unlinkSync(videoPath); } catch {}
