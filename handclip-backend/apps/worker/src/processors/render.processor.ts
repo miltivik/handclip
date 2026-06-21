@@ -330,14 +330,17 @@ export class RenderProcessor extends WorkerHost {
     } catch (err: any) {
       console.error(`[Render] Failed for project ${projectId}: ${err.message}`);
 
-      // Mark job as failed
+      // Mark job as failed. Log full error server-side, store generic
+      // message in DB so the API doesn't leak internal paths/state
+      // (FFmpeg errors commonly include /tmp/<uuid> paths, codec names,
+      // and env hints).
       if (dbJobId) {
         await supabase
           .from('jobs')
           .update({
             status: 'failed',
             progress: 0,
-            result: { error: err.message },
+            result: { error: 'Render failed. See server logs for details.' },
             updated_at: new Date().toISOString(),
           })
           .eq('id', dbJobId);

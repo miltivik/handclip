@@ -20,6 +20,17 @@ const POLL_INTERVAL_MS = 5_000;
 // and upload state — single-replica OK, multi-replica needs Redis.
 const sseConnectionsByIp = new Map<string, number>();
 
+// Defensive: cleanup() deletes the entry on req.close, but if the
+// handler is short-circuited (e.g. subscriber.error before cleanup
+// is registered) or the close event is missed, the entry can
+// leak. Periodic sweep keeps the Map bounded. unref() so this
+// interval never blocks process exit.
+const sseConnectionsSweep = setInterval(() => {
+  for (const [ip, count] of sseConnectionsByIp) {
+    if (count <= 0) sseConnectionsByIp.delete(ip);
+  }
+}, 5 * 60_000);
+sseConnectionsSweep.unref();
 @Controller()
 export class JobsController {
   constructor(private readonly jobsService: JobsService) {}
