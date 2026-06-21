@@ -1,8 +1,8 @@
 import { Injectable, BadRequestException, OnModuleDestroy } from '@nestjs/common';
-import { createHash } from 'crypto';
-import { createWriteStream, createReadStream, existsSync, unlinkSync, mkdirSync } from 'fs';
+import { createHash, randomUUID } from 'crypto';
+import { createReadStream, existsSync, unlinkSync, mkdirSync, readFileSync, appendFileSync, promises as fs } from 'fs';
+import { pipeline } from 'stream/promises';
 import { join } from 'path';
-import { randomUUID } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 import {
   ALLOWED_VIDEO_MIMETYPES,
@@ -25,7 +25,7 @@ interface UploadMetadata {
 export class UploadsService implements OnModuleDestroy {
   private uploads = new Map<string, UploadMetadata>();
   private uploadTimestamps = new Map<string, number>();
-  private cleanupInterval: ReturnType<typeof setInterval>;
+  private cleanupInterval: NodeJS.Timeout;
 
   constructor(private readonly supabaseService: SupabaseService) {
     this.cleanupInterval = setInterval(() => this.cleanExpiredUploads(), 5 * 60 * 1000);
@@ -90,7 +90,7 @@ export class UploadsService implements OnModuleDestroy {
     }
 
     const chunkPath = join(metadata.tempDir, `chunk-${chunkIndex}`);
-    await this.writeChunkToFile(chunkPath, chunk);
+    await fs.writeFile(chunkPath, chunk);
     metadata.chunks.set(chunkIndex, chunkPath);
 
     return {
@@ -113,7 +113,7 @@ export class UploadsService implements OnModuleDestroy {
     const outputPath = join(metadata.tempDir, 'output.' + metadata.extension);
 
     // Assemble chunks
-    await this.assembleChunks(metadata, outputPath);
+    this.assembleChunks(metadata, outputPath);
 
     // Verify checksum if provided
     if (checksum) {
@@ -127,7 +127,7 @@ export class UploadsService implements OnModuleDestroy {
     const videoUrl = await this.uploadToSupabase(outputPath, uploadId, metadata.extension, token);
 
     // Cleanup
-    this.cleanup(metadata);
+    this.cleanup(metadata, uploadId);
 
     return { videoUrl };
   }
@@ -143,61 +143,17 @@ export class UploadsService implements OnModuleDestroy {
     return extensionMap[mimetype] || 'mp4';
   }
 
-  private async writeChunkToFile(path: string, data: Buffer): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const stream = createWriteStream(path);
-      stream.write(data, () => {
-        stream.end();
-        stream.on('finish', resolve);
-        stream.on('error', reject);
-      });
-    });
-  }
-
-  private async assembleChunks(metadata: UploadMetadata, outputPath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const writeStream = createWriteStream(outputPath);
-      const sortedIndices = Array.from(metadata.chunks.keys()).sort((a, b) => a - b);
-
-      let currentIndex = 0;
-
-      const writeNext = () => {
-        if (currentIndex >= sortedIndices.length) {
-          writeStream.end();
-          return;
-        }
-
-        const chunkPath = metadata.chunks.get(sortedIndices[currentIndex]);
-        const readStream = createReadStream(chunkPath!);
-
-        readStream.on('data', (chunk) => {
-          writeStream.write(chunk);
-        });
-
-        readStream.on('end', () => {
-          currentIndex++;
-          writeNext();
-        });
-
-        readStream.on('error', reject);
-      };
-
-      writeStream.on('finish', resolve);
-      writeStream.on('error', reject);
-
-      writeNext();
-    });
+  private assembleChunks(metadata: UploadMetadata, outputPath: string): void {
+    const sorted = [...metadata.chunks.keys()].sort((a, b) => a - b);
+    for (const idx of sorted) {
+      appendFileSync(outputPath, readFileSync(metadata.chunks.get(idx)!));
+    }
   }
 
   private async calculateMd5(filePath: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const hash = createHash('md5');
-      const stream = createReadStream(filePath);
-
-      stream.on('data', (chunk) => hash.update(chunk));
-      stream.on('end', () => resolve(hash.digest('hex')));
-      stream.on('error', reject);
-    });
+    const hash = createHash('md5');
+    await pipeline(createReadStream(filePath), hash);
+    return hash.digest('hex');
   }
 
   private async uploadToSupabase(
@@ -210,7 +166,7 @@ export class UploadsService implements OnModuleDestroy {
     const bucket = 'source-videos';
     const destinationPath = `${uploadId}/input.${extension}`;
 
-    const fileBuffer = await this.readFileBuffer(filePath);
+    const fileBuffer = await fs.readFile(filePath);
 
     const { error } = await client.storage
       .from(bucket)
@@ -229,18 +185,7 @@ export class UploadsService implements OnModuleDestroy {
     return urlData.publicUrl;
   }
 
-  private async readFileBuffer(filePath: string): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const chunks: Buffer[] = [];
-      const stream = createReadStream(filePath);
-
-      stream.on('data', (chunk: any) => chunks.push(chunk));
-      stream.on('end', () => resolve(Buffer.concat(chunks)));
-      stream.on('error', reject);
-    });
-  }
-
-  private cleanup(metadata: UploadMetadata): void {
+  private cleanup(metadata: UploadMetadata, uploadId: string): void {
     try {
       if (existsSync(metadata.tempDir)) {
         for (const chunkPath of metadata.chunks.values()) {
@@ -252,13 +197,8 @@ export class UploadsService implements OnModuleDestroy {
     } catch {
       // Ignore cleanup errors
     } finally {
-      for (const [key, val] of this.uploads.entries()) {
-        if (val.tempDir === metadata.tempDir) {
-          this.uploads.delete(key);
-          this.uploadTimestamps.delete(key);
-          break;
-        }
-      }
+      this.uploads.delete(uploadId);
+      this.uploadTimestamps.delete(uploadId);
     }
   }
 
@@ -269,7 +209,7 @@ export class UploadsService implements OnModuleDestroy {
       if (now - timestamp > TTL) {
         const metadata = this.uploads.get(uploadId);
         if (metadata) {
-          this.cleanup(metadata);
+          this.cleanup(metadata, uploadId);
         } else {
           this.uploadTimestamps.delete(uploadId);
         }
@@ -278,9 +218,6 @@ export class UploadsService implements OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-    }
+    clearInterval(this.cleanupInterval);
   }
-
 }

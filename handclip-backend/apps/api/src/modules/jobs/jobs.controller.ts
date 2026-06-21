@@ -1,10 +1,9 @@
-import { Controller, Get, Post, Param, Body, Sse, Req } from '@nestjs/common';
+import { Controller, Get, Param, Sse, Req } from '@nestjs/common';
 import { Public } from '../../decorators/public.decorator';
 import { CurrentToken } from '../../decorators/current-token.decorator';
 import { Observable } from 'rxjs';
 import { QueueEvents } from 'bullmq';
 import { JobsService } from './jobs.service';
-import { JobStatusDto } from '@handclip/shared';
 
 @Controller()
 export class JobsController {
@@ -88,15 +87,5 @@ export class JobsController {
       req.on('close', cleanup);
       return cleanup;
     });
-  }
-
-  @Post('jobs/:jobId/progress')
-  async updateProgress(
-    @Param('jobId') jobId: string,
-    @CurrentToken() token: string,
-    @Body() body: { jobId: string; type: string; status: string; progress: number },
-  ) {
-    await this.jobsService.updateJobProgress(body.jobId, body as unknown as JobStatusDto, token);
-    return { success: true };
   }
 }

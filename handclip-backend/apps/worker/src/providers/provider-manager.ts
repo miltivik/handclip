@@ -33,15 +33,19 @@ class AllProvidersFailed extends Error {
   }
 }
 
-
-
 export class ProviderManager {
   private rateLimits = new Map<string, { count: number; resetAt: number }>();
   private readonly MAX_RPM = 50;
   private providers: ProviderConfig[] = [];
-  private byokConfig: { enabled: boolean; provider: ProviderName; apiKey: string } | null = null;
 
-  constructor() {}
+  enableBYOK(provider: ProviderName, apiKey: string) {
+    const p = this.providers.find((pr) => pr.name === provider);
+    if (p) p.apiKey = apiKey;
+  }
+
+  disableBYOK() {
+    // No state to reset — provider keys are mutated in place by enableBYOK.
+  }
 
   private ensureProviders(): void {
     if (this.providers.length > 0) return;
@@ -69,16 +73,6 @@ export class ProviderManager {
         costPer1MOutput: 0.60,
       },
     ];
-  }
-
-  enableBYOK(provider: ProviderName, apiKey: string) {
-    this.byokConfig = { enabled: true, provider, apiKey };
-    const p = this.providers.find((pr) => pr.name === provider);
-    if (p) p.apiKey = apiKey;
-  }
-
-  disableBYOK() {
-    this.byokConfig = null;
   }
 
   async callWithFallback(task: StageTask): Promise<ProviderResult> {

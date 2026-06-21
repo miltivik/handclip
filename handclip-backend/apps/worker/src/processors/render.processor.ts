@@ -5,10 +5,10 @@ import * as path from 'path';
 import * as os from 'os';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
+import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseService } from '../modules/supabase/supabase.service';
 import { validateTempPath } from '../utils/validate-path';
 import { EXPORT_PRESETS, MIN_CLIP_DURATION_SEC, MAX_CLIP_DURATION_SEC, validatePublicUrl } from '@handclip/shared';
-
 const execAsync = promisify(exec);
 interface RenderJobData {
   projectId: string;
@@ -469,7 +469,7 @@ export class RenderProcessor extends WorkerHost {
     totalDuration: number,
     job: Job<RenderJobData>,
     dbJobId: string | undefined,
-    supabase: ReturnType<SupabaseService['getServiceRoleClient']>,
+    supabase: SupabaseClient,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const child = spawn('ffmpeg', args, { timeout: 300000 });
@@ -513,7 +513,7 @@ export class RenderProcessor extends WorkerHost {
   private async failJob(
     dbJobId: string | undefined,
     dbExportId: string | undefined,
-    supabase: ReturnType<SupabaseService['getServiceRoleClient']>,
+    supabase: SupabaseClient,
     errorMessage: string,
   ): Promise<void> {
     if (dbJobId) {

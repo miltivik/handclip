@@ -23,8 +23,6 @@ interface JobsRow {
 
 @Injectable()
 export class JobsService {
-  // Lightweight read cache (write-through from updateJobProgress)
-  private progressCache = new Map<string, JobStatusDto>();
 
   constructor(
     @InjectQueue('transcription') private transcriptionQueue: Queue,
@@ -207,53 +205,5 @@ export class JobsService {
       progress: jobsRow.progress,
       returnvalue: result ?? undefined,
     };
-  }
-
-  getJobProgress(jobId: string): JobStatusDto {
-    const cached = this.progressCache.get(jobId);
-    if (cached) return cached;
-
-    // Cache miss — return pending status (async read from DB not possible in sync context)
-    return {
-      jobId,
-      status: 'QUEUED',
-      progress: 0,
-    };
-  async updateJobProgress(jobId: string, status: JobStatusDto, token?: string): Promise<void> {
-    // Write-through cache
-    this.progressCache.set(jobId, status);
-
-    // Update DB
-    const supabase = token
-      ? this.supabaseService.getClientWithAuth(token)
-      : this.supabaseService.getClient();
-    const updates: Partial<{
-      status: string;
-      progress: number;
-      result: any;
-      updated_at: string;
-    }> = {
-      progress: status.progress,
-    };
-
-    if (status.returnvalue !== undefined) {
-      updates.result = status.returnvalue;
-    }
-
-    if (status.status) {
-      updates.status = status.status.toLowerCase();
-    }
-
-    const { error } = await supabase
-      .from('jobs')
-      .update({
-        ...updates,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', jobId);
-
-    if (error) {
-      console.error(`Failed to update job ${jobId} in DB: ${error.message}`);
-    }
   }
 }

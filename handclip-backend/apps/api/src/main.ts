@@ -7,6 +7,8 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+import { randomUUID } from 'crypto';
+
 import { NestFactory, HttpAdapterHost } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { CatchEverythingFilter } from './filters/catch-everything.filter';
@@ -28,7 +30,7 @@ async function bootstrap() {
 
   // Request ID middleware — propagates x-request-id for structured logging
   app.use((req: any, res: any, next: any) => {
-    req.id = req.headers['x-request-id'] || `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    req.id = req.headers['x-request-id'] || randomUUID();
     res.setHeader('x-request-id', req.id);
     next();
   });
