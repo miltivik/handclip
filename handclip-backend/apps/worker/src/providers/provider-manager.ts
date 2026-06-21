@@ -26,7 +26,7 @@ export interface ProviderResult {
   usage: { inputTokens: number; outputTokens: number };
 }
 
-export class AllProvidersFailed extends Error {
+class AllProvidersFailed extends Error {
   constructor(stage: string) {
     super(`Todos los providers para ${stage} fallaron`);
     this.name = 'AllProvidersFailed';

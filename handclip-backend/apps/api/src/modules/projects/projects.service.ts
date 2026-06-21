@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import { SupabaseService } from '../supabase/supabase.service';
+import { ALLOWED_VIDEO_MIMETYPES, MAX_VIDEO_SIZE_BYTES, MAX_VIDEO_SIZE_MB } from '@handclip/shared';
 
 export interface Project {
   id: string;
@@ -31,16 +32,6 @@ function mapProject(row: Record<string, unknown>): Project {
   };
 }
 
-export const ALLOWED_VIDEO_MIMETYPES = [
-  'video/mp4',
-  'video/quicktime',
-  'video/webm',
-  'video/x-m4v',
-  'video/x-matroska',
-];
-
-export const MAX_VIDEO_SIZE_MB = 500;
-export const MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024;
 
 @Injectable()
 export class ProjectsService {

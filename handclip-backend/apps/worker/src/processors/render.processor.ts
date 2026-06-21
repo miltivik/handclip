@@ -7,9 +7,7 @@ import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { SupabaseService } from '../modules/supabase/supabase.service';
 import { validateTempPath } from '../utils/validate-path';
-import { validatePublicUrl } from '@handclip/shared';
-import { incrementExportCount } from '../providers/export-counter';
-import { MIN_CLIP_DURATION_SEC, MAX_CLIP_DURATION_SEC } from '@handclip/shared';
+import { EXPORT_PRESETS, MIN_CLIP_DURATION_SEC, MAX_CLIP_DURATION_SEC, validatePublicUrl } from '@handclip/shared';
 
 const execAsync = promisify(exec);
 interface RenderJobData {
@@ -35,13 +33,6 @@ interface SubtitleSegment {
   words?: { word: string; start: number; end: number; probability: number }[];
 }
 
-const PRESETS = {
-  tiktok:   { width: 1080, height: 1920, videoBitrate: '8M',  audioBitrate: '128k', crf: 18, preset: 'fast' },
-  reels:    { width: 1080, height: 1920, videoBitrate: '8M',  audioBitrate: '128k', crf: 18, preset: 'fast' },
-  shorts:   { width: 1080, height: 1920, videoBitrate: '8M',  audioBitrate: '128k', crf: 18, preset: 'fast' },
-  draft:    { width: 720,  height: 1280, videoBitrate: '2M',  audioBitrate: '96k',  crf: 28, preset: 'ultrafast' },
-  hq:       { width: 1080, height: 1920, videoBitrate: '20M', audioBitrate: '256k', crf: 15, preset: 'slow' },
-};
 
 @Processor('render', { lockDuration: 600000, lockRenewTime: 30000 })
 export class RenderProcessor extends WorkerHost {
@@ -51,7 +42,7 @@ export class RenderProcessor extends WorkerHost {
 
   async process(job: Job<RenderJobData>): Promise<{ outputUrl: string }> {
     const { projectId, userId, videoUrl, trimStart, trimEnd, subtitles, musicUrl, musicVolume, musicFadeIn, musicFadeOut, preset, clipId } = job.data;
-    const config = PRESETS[preset] || PRESETS.tiktok;
+    const config = EXPORT_PRESETS[preset] || EXPORT_PRESETS.tiktok;
     const supabase = this.supabaseService.getServiceRoleClient();
 
     // Create job record in DB
@@ -402,7 +393,7 @@ export class RenderProcessor extends WorkerHost {
     musicPath: string | null;
     trimStart: number;
     trimEnd: number;
-    config: typeof PRESETS.tiktok;
+    config: typeof EXPORT_PRESETS.tiktok;
     musicVolume?: number;
     musicFadeIn?: number;
     musicFadeOut?: number;
