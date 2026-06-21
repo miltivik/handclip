@@ -133,7 +133,6 @@ export class RenderProcessor extends WorkerHost {
     }
 
     try {
-      if (dbJobId) await supabase.from('jobs').update({ progress: 5 }).eq('id', dbJobId);
       await job.updateProgress(5);
       // Step 1: Download video
       let downloadUrl: string;
@@ -153,7 +152,6 @@ export class RenderProcessor extends WorkerHost {
       } else {
         fs.copyFileSync(downloadUrl, inputPath);
       }
-      if (dbJobId) await supabase.from('jobs').update({ progress: 15 }).eq('id', dbJobId);
       await job.updateProgress(15);
 
       // Step 2: Generate SRT subtitle file
@@ -169,7 +167,6 @@ export class RenderProcessor extends WorkerHost {
         fs.writeFileSync(musicPath, Buffer.from(await res.arrayBuffer()));
       }
 
-      if (dbJobId) await supabase.from('jobs').update({ progress: 25 }).eq('id', dbJobId);
       await job.updateProgress(25);
 
       // Step 5: Execute FFmpeg with codec fallback (2 levels, no H.265)
@@ -200,7 +197,6 @@ export class RenderProcessor extends WorkerHost {
       }
       if (lastError) throw lastError;
 
-      if (dbJobId) await supabase.from('jobs').update({ progress: 90 }).eq('id', dbJobId);
       await job.updateProgress(90);
       // Generate thumbnail at clip midpoint
       const midPoint = trimStart + (trimEnd - trimStart) / 2;
@@ -487,12 +483,6 @@ export class RenderProcessor extends WorkerHost {
             parseFloat(match[3]);
           const progress = Math.min(90, Math.round(30 + (seconds / totalDuration) * 60));
           job.updateProgress(progress).catch(() => {});
-          if (dbJobId) {
-            supabase.from('jobs').update({ progress }).eq('id', dbJobId).then(
-              () => {},
-              () => {},
-            );
-          }
         }
       });
 
