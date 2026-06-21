@@ -29,13 +29,13 @@ export default function ProcessingScreen() {
 
     const runAnalysis = async () => {
       try {
-        const { analysisJobId } = await api.analyze(params.projectId!, params.videoUrl!);
+        const { jobId } = await api.analyze(params.projectId!, params.videoUrl!);
         if (cancelled) return;
 
         // Poll job status every 2s (EventSource not available on React Native)
         interval = setInterval(async () => {
           try {
-            const job = await api.getJobStatus(analysisJobId);
+            const job = await api.getJobStatus(jobId);
             if (cancelled) return;
 
             setProgress(job.progress);

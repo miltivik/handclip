@@ -28,4 +28,4 @@ export const PRESETS: Record<'tiktok' | 'reels' | 'shorts', PresetConfig> = {
 };
 
 export const MAX_VIDEO_DURATION_SEC = 600; // 10 minutes
-export const MAX_VIDEO_SIZE_BYTES = 5368709120; // 5 GB
+export const MAX_VIDEO_SIZE_BYTES = 500 * 1024 * 1024; // 500 MB — must match libs/shared/src/constants/limits.ts

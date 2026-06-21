@@ -13,7 +13,11 @@ export function validateVideoFile(
   duration?: number
 ): ValidationResult {
   // Check file extension
-  const extension = fileName.toLowerCase().slice(fileName.lastIndexOf('.'));
+  const dot = fileName.lastIndexOf('.');
+  if (dot < 0) {
+    return { valid: false, error: 'El archivo debe tener una extensión' };
+  }
+  const extension = fileName.toLowerCase().slice(dot);
   if (!VIDEO_EXTENSIONS.includes(extension)) {
     return {
       valid: false,

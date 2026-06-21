@@ -1,11 +1,8 @@
 import { create } from 'zustand';
+import type { SubtitleSegment } from '../services/api';
 
-export interface Subtitle {
-  id: string;
-  text: string;
-  startTime: number;
-  endTime: number;
-}
+// ponytail: alias to the canonical server shape so local edits stay exportable
+export type Subtitle = SubtitleSegment;
 
 export type PresetType = 'tiktok' | 'reels' | 'shorts';
 

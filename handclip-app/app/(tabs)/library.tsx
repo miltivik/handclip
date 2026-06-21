@@ -6,6 +6,7 @@ import EmptyState from '../../components/ui/EmptyState';
 
 interface ExportItem {
   id: string;
+  projectId: string;
   status: string;
   outputUrl?: string;
   preset: string;
@@ -37,6 +38,7 @@ export default function LibraryScreen() {
             if (exp.status === 'completed' || exp.status === 'rendering') {
               allExports.push({
                 ...exp,
+                projectId: project.id,
                 projectName: project.name || 'Sin título',
               });
             }
@@ -95,7 +97,7 @@ export default function LibraryScreen() {
       style={styles.exportCard}
       onPress={() => {
         if (item.outputUrl) {
-          router.push(`/project/${item.id}/export?exportId=${item.id}&preset=${item.preset}`);
+          router.push(`/project/${item.projectId}/export?exportId=${item.id}&preset=${item.preset}`);
         }
       }}
     >

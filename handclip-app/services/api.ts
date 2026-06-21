@@ -40,13 +40,14 @@ export interface SubtitleSegment {
   text: string;
   startTime: number;
   endTime: number;
-  words?: { word: string; start: number; end: number; probability: number }[];
+  words: { word: string; start: number; end: number; probability: number }[];
+  language: string;
+  speaker?: string;
 }
 
 export interface AnalyzeResponse {
-  transcriptionJobId: string;
-  analysisJobId: string;
-  message: string;
+  jobId: string;
+  message?: string;
 }
 
 export interface UploadResponse {
@@ -136,13 +137,19 @@ export const api = {
 
   // ---- Export ----
   createExportJob: (projectId: string, data: {
-    clipId?: string;
+    clipId: string;
     trimStart: number;
     trimEnd: number;
     subtitles: SubtitleSegment[];
     preset: string;
   }) =>
     post<{ jobId: string; exportId: string }>(`/projects/${projectId}/export`, data),
+
+  createManualClip: (projectId: string, startTime: number, endTime: number) =>
+    post<{ id: string; startTime: number; endTime: number }>(
+      `/projects/${projectId}/clips/manual`,
+      { startTime, endTime },
+    ),
 
   getExportJob: (exportId: string) =>
     get<{ status: string; progress: number; outputUrl?: string }>(`/exports/${exportId}/status`),

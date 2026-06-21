@@ -57,17 +57,6 @@ export default function HomeScreen() {
         },
       });
 
-      // 3. Navigate to processing with real metadata
-      router.push({
-        pathname: '/import/processing',
-        params: {
-          projectId,
-          videoUrl: encodeURIComponent(videoUrl),
-          duration: String(Math.round(duration)),
-          width: String(asset.width ?? 0),
-          height: String(asset.height ?? 0),
-        },
-      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al subir el video');
     } finally {
