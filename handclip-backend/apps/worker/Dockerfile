@@ -25,6 +25,8 @@ RUN pnpm run build --filter=@handclip/worker
 # Stage 3: Production runtime
 FROM node:20-alpine AS production
 
+RUN apk add --no-cache ffmpeg
+
 RUN corepack enable pnpm
 
 WORKDIR /app

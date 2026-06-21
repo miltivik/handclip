@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { Public } from '../../decorators/public.decorator';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -33,10 +33,15 @@ export class HealthController {
       checks.supabase = `error: ${e.message}`;
     }
 
-    return {
-      status: Object.values(checks).every((v) => v === 'ok') ? 'healthy' : 'degraded',
+    const healthy = Object.values(checks).every((v) => v === 'ok');
+    const body = {
+      status: healthy ? 'healthy' : 'degraded',
       timestamp: new Date().toISOString(),
       checks,
     };
+    if (!healthy) {
+      throw new ServiceUnavailableException(body);
+    }
+    return body;
   }
 }
