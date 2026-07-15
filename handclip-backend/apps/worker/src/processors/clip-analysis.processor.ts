@@ -1,8 +1,10 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
-import { ClipCandidate, ClipCandidateSchema, SubtitleSegment } from '@handclip/shared';
+import { ClipCandidateSchema } from '@handclip/shared';
+import type { ClipCandidate, SubtitleSegment } from '@handclip/shared';
 import { SupabaseService } from '../modules/supabase/supabase.service';
 import { providerManager, StageTask } from '../providers/provider-manager';
+import { randomUUID } from 'crypto';
 const CLIP_ANALYSIS_SYSTEM_PROMPT = `Eres un analista de contenido para redes sociales. Tu tarea es identificar los mejores momentos de una transcripción de video para crear clips cortos virales (TikTok, Reels, Shorts).
 
 Analiza la transcripción y devuelve un JSON con este formato exacto:
@@ -97,7 +99,7 @@ function normalizeClip(clip: Record<string, unknown>): Partial<ClipCandidate> {
     : ['tiktok', 'youtube_shorts'];
 
   return {
-    id: String(clip.id || `clip-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+    id: String(clip.id || randomUUID()),
     startTime: Number(clip.startTime) || 0,
     endTime: Number(clip.endTime) || 0,
     confidenceScore: Math.min(100, Math.max(0, Number(clip.confidenceScore) || 50)),
@@ -139,7 +141,7 @@ function parseAndValidateClips(content: string): ClipCandidate[] {
       } catch {
         // Partial validation - return with defaults
         return ClipCandidateSchema.parse({
-          id: normalized.id || `clip-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          id: normalized.id || randomUUID(),
           startTime: normalized.startTime ?? 0,
           endTime: normalized.endTime ?? 0,
           confidenceScore: normalized.confidenceScore ?? 50,

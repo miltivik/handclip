@@ -4,8 +4,7 @@ import { Job } from 'bullmq';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { exec, spawn, type ChildProcess } from 'child_process';
-import { promisify } from 'util';
+import { spawn, type ChildProcess } from 'child_process';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseService } from '../modules/supabase/supabase.service';
 import { incrementExportCount, decrementExportCount } from '../providers/export-counter';
@@ -15,7 +14,9 @@ import { EXPORT_PRESETS, MIN_CLIP_DURATION_SEC, MAX_CLIP_DURATION_SEC, validateP
 // @handclip/shared yet (RedactPII subagent is adding it). Drop-in: token -> 8 chars + '...'.
 const redactPushToken = (token: string | null | undefined): string =>
   token ? `${token.slice(0, 8)}...` : '(none)';
-const execAsync = promisify(exec);
+// ponytail: removed `const execAsync = promisify(exec)` — the only exec-family
+// use was a shell-interpolated ffprobe call; replaced with shell-free spawn
+// below so we never import `exec` (no shell injection surface).
 interface RenderJobData {
   projectId: string;
   userId: string;
@@ -156,7 +157,9 @@ export class RenderProcessor extends WorkerHost implements OnApplicationShutdown
       // private/loopback/cloud-metadata IPs. The previous code allowed
       // fs.copyFileSync of any local path — workers could read /etc/passwd
       // or .env and pipe it to FFmpeg.
-      const downloadUrl = await validatePublicUrl(videoUrl);
+      // ponytail: validatePublicUrl now returns {url, resolvedIp}; the resolvedIp
+      // dispatcher integration is a follow-up (see validate-url.ts TODO).
+      const { url: downloadUrl } = await validatePublicUrl(videoUrl);
       const res = await fetch(downloadUrl);
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.startsWith('video/') && !contentType.startsWith('audio/')) {
@@ -167,7 +170,8 @@ export class RenderProcessor extends WorkerHost implements OnApplicationShutdown
       const MAX_DOWNLOAD_BYTES = 600 * 1024 * 1024;
       const chunks: Buffer[] = [];
       let received = 0;
-      for await (const chunk of res.body!) {
+      if (!res.body) throw new Error('Empty response body from upstream');
+      for await (const chunk of res.body) {
         received += chunk.length;
         if (received > MAX_DOWNLOAD_BYTES) {
           throw new Error(`Download exceeds ${MAX_DOWNLOAD_BYTES} bytes`);
@@ -185,7 +189,7 @@ export class RenderProcessor extends WorkerHost implements OnApplicationShutdown
 
       // Step 3: Download music if provided
       if (musicUrl && musicPath) {
-        const safeMusicUrl = await validatePublicUrl(musicUrl);
+        const { url: safeMusicUrl } = await validatePublicUrl(musicUrl);
         // ponytail: same MAX_DOWNLOAD_BYTES cap + 60s timeout as the video
         // download. Music files are smaller but a hostile server can stream
         // forever without these guards.
@@ -193,7 +197,8 @@ export class RenderProcessor extends WorkerHost implements OnApplicationShutdown
         const res = await fetch(safeMusicUrl, { signal: AbortSignal.timeout(60_000) });
         const musicChunks: Buffer[] = [];
         let musicReceived = 0;
-        for await (const chunk of res.body!) {
+        if (!res.body) throw new Error('Empty response body from upstream');
+        for await (const chunk of res.body) {
           musicReceived += chunk.length;
           if (musicReceived > MAX_MUSIC_BYTES) {
             throw new Error(`Music download exceeds ${MAX_MUSIC_BYTES} bytes`);
@@ -295,10 +300,27 @@ export class RenderProcessor extends WorkerHost implements OnApplicationShutdown
       // Get video duration for export record
       let duration: number | null = null;
       try {
-        const { stdout } = await execAsync(
-          `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${outputPath}"`
-        );
-        duration = parseFloat(stdout.trim()) || null;
+        // ponytail: shell-free spawn with an argv array instead of exec via a
+        // template string that interpolated outputPath — removes the
+        // shell-injection surface and the need to import `exec`.
+        duration = await new Promise<number | null>((resolve, reject) => {
+          const proc = spawn('ffprobe', [
+            '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            outputPath,
+          ]);
+          let out = '';
+          proc.stdout.setEncoding('utf8').on('data', (d: string) => { out += d; });
+          proc.on('error', reject);
+          proc.on('close', (code) => {
+            if (code !== 0) reject(new Error(`ffprobe exited with code ${code}`));
+            else {
+              const parsed = parseFloat(out.trim());
+              resolve(Number.isNaN(parsed) ? null : parsed);
+            }
+          });
+        });
       } catch {
         duration = trimEnd - trimStart; // fallback
       }

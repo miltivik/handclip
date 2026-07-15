@@ -1,6 +1,7 @@
 import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
 import { Job, Queue } from 'bullmq';
-import { SubtitleSegment, SubtitleSegmentSchema } from '@handclip/shared';
+import { SubtitleSegmentSchema } from '@handclip/shared';
+import type { SubtitleSegment } from '@handclip/shared';
 import { SupabaseService } from '../modules/supabase/supabase.service';
 import { validatePublicUrl } from '@handclip/shared';
 import { validateTempPath } from '../utils/validate-path';
@@ -46,6 +47,39 @@ interface WhisperWord {
 interface TranscriptionJobData {
   projectId: string;
   videoUrl: string;
+}
+
+/**
+ * Build and validate local-fallback subtitle segments from detected silence
+ * boundaries. Returns typed SubtitleSegment[] (parsed via Zod) so a malformed
+ * region can never leak an `any` into downstream code.
+ * ponytail: extracted from localTranscriptionFallback so the parse is unit
+ * testable without spawning ffmpeg.
+ */
+export function buildLocalSegments(
+  silenceStarts: number[],
+  silenceEnds: number[],
+  projectId: string,
+): SubtitleSegment[] {
+  const rawSegments: unknown[] = [];
+  let segIdx = 0;
+  let lastEnd = 0;
+  for (let i = 0; i < silenceStarts.length; i++) {
+    if (silenceStarts[i] > lastEnd) {
+      // Non-silence region: [lastEnd, silenceStarts[i]]
+      rawSegments.push({
+        id: `local-${projectId}-${segIdx}`,
+        startTime: lastEnd,
+        endTime: silenceStarts[i],
+        text: `[Segmento ${segIdx + 1}]`,
+        words: [],
+        language: 'unknown',
+      });
+      segIdx++;
+    }
+    lastEnd = silenceEnds[i] || silenceStarts[i];
+  }
+  return SubtitleSegmentSchema.array().parse(rawSegments);
 }
 
 @Processor('transcription', { lockDuration: 600000, lockRenewTime: 30000 })
@@ -102,7 +136,9 @@ export class TranscriptionProcessor extends WorkerHost {
       // Step 1: Download video
       // ponytail: reject local paths. validatePublicUrl enforces HTTPS +
       // blocks private/loopback/cloud-metadata IPs.
-      const downloadUrl = await validatePublicUrl(videoUrl);
+      // ponytail: validatePublicUrl now returns {url, resolvedIp}; the resolvedIp
+      // dispatcher integration is a follow-up (see validate-url.ts TODO).
+      const { url: downloadUrl } = await validatePublicUrl(videoUrl);
       const response = await fetch(downloadUrl);
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.startsWith('video/') && !contentType.startsWith('audio/')) {
@@ -361,7 +397,7 @@ export class TranscriptionProcessor extends WorkerHost {
   private async localTranscriptionFallback(
     audioPath: string,
     job: Job<TranscriptionJobData>,
-  ): Promise<{ segments: any[]; language: string }> {
+  ): Promise<{ segments: SubtitleSegment[]; language: string }> {
     // Use FFmpeg silencedetect to find speech segments
     // This provides rough timestamps without actual transcription
     // ponytail: shell-free spawn; previous execAsync was template-string
@@ -382,24 +418,8 @@ export class TranscriptionProcessor extends WorkerHost {
       if (startMatch) silenceStarts.push(parseFloat(startMatch[1]));
       if (endMatch) silenceEnds.push(parseFloat(endMatch[1]));
     }
-    // Build segments from non-silence regions
-    const segments: any[] = [];
-    let segIdx = 0;
-    let lastEnd = 0;
-    for (let i = 0; i < silenceStarts.length; i++) {
-      if (silenceStarts[i] > lastEnd) {
-        // Non-silence region: [lastEnd, silenceStarts[i]]
-        segments.push({
-          id: `local-${job.data.projectId}-${segIdx}`,
-          start: lastEnd,
-          end: silenceStarts[i],
-          text: `[Segmento ${segIdx + 1}]`,
-          words: [],
-        });
-        segIdx++;
-      }
-      lastEnd = silenceEnds[i] || silenceStarts[i];
-    }
+    // Build + validate typed segments from the silence boundaries.
+    const segments = buildLocalSegments(silenceStarts, silenceEnds, job.data.projectId);
     console.log(`[Transcription] Local fallback produced ${segments.length} segments`);
     return { segments, language: 'unknown' };
   }

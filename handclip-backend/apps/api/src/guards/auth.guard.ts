@@ -30,7 +30,8 @@ export class AuthGuard implements CanActivate {
 
     // Allow internal API key as alternative auth (for worker→API calls).
     // Use timingSafeEqual to prevent length/content timing leakage.
-    const internalKey = request.headers['x-internal-api-key'] as string | undefined;
+    const raw = request.headers['x-internal-api-key'];
+    const internalKey = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw[0] : undefined;
     const configuredKey = process.env.INTERNAL_API_KEY;
     if (configuredKey && internalKey && safeEqual(internalKey, configuredKey)) {
       request.user = { id: 'worker', role: 'internal' };

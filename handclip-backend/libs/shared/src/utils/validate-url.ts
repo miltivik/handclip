@@ -3,10 +3,17 @@ import { promises as dns } from 'dns';
 const PRIVATE_IPV4_RANGES: readonly [number, number][] = [
   [0x00000000, 0x00FFFFFF], // 0.0.0.0/8
   [0x0A000000, 0x0AFFFFFF], // 10.0.0.0/8
+  [0x64400000, 0x647FFFFF], // 100.64.0.0/10 (CGNAT)
   [0x7F000000, 0x7FFFFFFF], // 127.0.0.0/8
   [0xA9FE0000, 0xA9FEFFFF], // 169.254.0.0/16
   [0xAC100000, 0xAC1FFFFF], // 172.16.0.0/12
+  [0xC0000200, 0xC00002FF], // 192.0.2.0/24 (TEST-NET-1)
   [0xC0A80000, 0xC0A8FFFF], // 192.168.0.0/16
+  [0xC6120000, 0xC613FFFF], // 198.18.0.0/15 (benchmark)
+  [0xC6336400, 0xC63364FF], // 198.51.100.0/24 (TEST-NET-2)
+  [0xCB007100, 0xCB0071FF], // 203.0.113.0/24 (TEST-NET-3)
+  [0xE0000000, 0xEFFFFFFF], // 224.0.0.0/4 (multicast)
+  [0xF0000000, 0xFFFFFFFF], // 240.0.0.0/4 (reserved)
 ];
 
 const INTERNAL_HOSTNAMES: Record<string, true> = {
@@ -80,9 +87,11 @@ function isInternalHostname(hostname: string): boolean {
  * - Hostnames that resolve to private/internal IPs
  * - Localhost / single-label hostnames / internal service names
  *
- * Returns the normalized URL string.
+ * Returns the normalized URL and the first resolved (public) IP.
+ * Consumers MUST connect to `resolvedIp` for the actual TCP request,
+ * not re-resolve the hostname, to defeat DNS-rebinding attacks.
  */
-export async function validatePublicUrl(url: string): Promise<string> {
+export async function validatePublicUrl(url: string): Promise<{ url: string; resolvedIp: string }> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -115,11 +124,6 @@ export async function validatePublicUrl(url: string): Promise<string> {
     throw new Error(`DNS resolution failed for hostname: ${hostname}`);
   }
 
-  // If no IPs resolved at all, reject
-  if (ips.length === 0) {
-    throw new Error(`Could not resolve hostname: ${hostname}`);
-  }
-
   // Check every resolved IP against private ranges
   for (const ip of ips) {
     if (ip.includes(':')) {
@@ -133,5 +137,11 @@ export async function validatePublicUrl(url: string): Promise<string> {
     }
   }
 
-  return parsed.href;
+  const resolvedIp = ips[0];
+  if (!resolvedIp) {
+    throw new Error(`Could not resolve hostname: ${hostname}`);
+  }
+
+  // TODO(ponytail): update consumers (transcription/render/clip-analysis processors) to use resolvedIp via undici Agent dispatcher
+  return { url: parsed.href, resolvedIp };
 }

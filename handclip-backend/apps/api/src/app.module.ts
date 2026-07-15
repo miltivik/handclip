@@ -21,7 +21,7 @@ import { ExportsModule } from './modules/exports/exports.module';
     }),
     ThrottlerModule.forRoot([{
       ttl: seconds(60),
-      limit: 100,
+      limit: 300,
     }]),
     BullModule.forRoot({
       connection: {

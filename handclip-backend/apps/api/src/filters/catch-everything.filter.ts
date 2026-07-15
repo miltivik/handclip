@@ -24,9 +24,13 @@ export class CatchEverythingFilter implements ExceptionFilter {
       exception instanceof Error ? exception.message : 'Internal server error';
 
     // Log full error in production (structured, not raw stack)
+    // Redact query string from URL to avoid logging tokens.
     if (httpStatus >= 500) {
+      const req = ctx.getRequest();
+      const method = req?.method;
+      const safeUrl = req?.path ?? req?.url?.split('?')[0];
       console.error(
-        `[Unhandled ${httpStatus}] ${ctx.getRequest()?.method} ${ctx.getRequest()?.url}`,
+        `[Unhandled ${httpStatus}] ${method} ${safeUrl}`,
         exception instanceof Error ? exception.stack : String(exception),
       );
     }

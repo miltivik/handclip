@@ -35,6 +35,10 @@ Thumbs.db
 apps/api/dist/
 apps/worker/dist/
 
+# Graphify output
+graphify-out/
+# Session memory (intentionally untracked — see CLAUDE.md)
+memory:/
 # Logs
 *.log
 npm-debug.log*

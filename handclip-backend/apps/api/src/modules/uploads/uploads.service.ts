@@ -51,6 +51,17 @@ export class UploadsService implements OnModuleDestroy {
       );
     }
 
+    // ponytail: cap concurrent uploads per user. O(n) scan is fine; users rarely have >100 active uploads.
+    // Bump to Map<userId, count> if this becomes a hot path.
+    const MAX_CONCURRENT_UPLOADS_PER_USER = 5;
+    const activeForUser = Array.from(this.uploads.values())
+      .filter((m) => m.userId === userId).length;
+    if (activeForUser >= MAX_CONCURRENT_UPLOADS_PER_USER) {
+      throw new BadRequestException(
+        `Too many active uploads (max ${MAX_CONCURRENT_UPLOADS_PER_USER}). Complete or cancel existing uploads first.`,
+      );
+    }
+
     const uploadId = randomUUID();
     const extension = this.getExtensionFromMimeType(mimeType);
     const tempDir = join(process.env.TMPDIR || '/tmp', `upload-${uploadId}`);
@@ -113,6 +124,18 @@ export class UploadsService implements OnModuleDestroy {
     const metadata = this.uploads.get(uploadId);
     if (!metadata) {
       throw new BadRequestException('Upload not found or expired');
+    }
+
+    // defense-in-depth: same ownership check as uploadChunk
+    if (metadata.userId !== userId) {
+      throw new BadRequestException('Upload not found or expired');
+    }
+
+    // ponytail: refuse to assemble/upload incomplete uploads — saves storage + bandwidth
+    if (metadata.chunks.size !== metadata.totalChunks) {
+      throw new BadRequestException(
+        `Missing chunks: received ${metadata.chunks.size} of ${metadata.totalChunks}`,
+      );
     }
 
     const outputPath = join(metadata.tempDir, 'output.' + metadata.extension);

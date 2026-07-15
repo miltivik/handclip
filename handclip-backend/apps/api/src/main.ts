@@ -1,9 +1,17 @@
-const REQUIRED_VARS = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'REDIS_HOST', 'INTERNAL_API_KEY'];
+const REQUIRED_VARS = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'REDIS_HOST', 'INTERNAL_API_KEY', 'APP_URL'];
 const missing = REQUIRED_VARS.filter((v) => !process.env[v]);
 if (missing.length > 0) {
   console.error(`Missing required env vars: ${missing.join(', ')}`);
   console.error('Copy .env.example to .env and fill in the values.');
   process.exit(1);
+}
+// CORS: require an explicit origin at boot instead of defaulting to '*'.
+// ponytail: a wildcard origin is a footgun for a credentialed API; fail fast
+// at startup if the operator forgot to set it rather than silently allowing
+// any origin.
+const corsOrigin = process.env.CORS_ORIGIN;
+if (!corsOrigin) {
+  throw new Error('CORS_ORIGIN env var is required');
 }
 
 import { randomUUID } from 'crypto';
@@ -33,7 +41,7 @@ async function bootstrap() {
 
   // CORS
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: corsOrigin,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Internal-API-Key'],
   });

@@ -12,12 +12,12 @@ export class NotificationsController {
   @Post('push')
   async sendPush(
     @Body(new ZodValidationPipe(PushNotificationDtoSchema)) body: PushNotificationDto,
-    @CurrentUser() user: { id: string } | undefined,
+    @CurrentUser() user: { id: string; role: string } | undefined,
     @CurrentToken() token: string,
   ) {
-    // ponytail: internal-key path (worker) has token === ''; user path has JWT.
-    // Internal calls may push to any userId; user calls can only push to themselves.
-    const isInternal = token === '';
+    // ponytail: internal calls (role 'internal', set by AuthGuard for worker key) may push to any userId;
+    // user calls (JWT) can only push to themselves.
+    const isInternal = user?.role === 'internal';
     const targetUserId = isInternal ? body.userId : user?.id;
     if (!targetUserId) {
       throw new BadRequestException('userId required');

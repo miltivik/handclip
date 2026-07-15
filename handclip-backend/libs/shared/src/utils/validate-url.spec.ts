@@ -30,3 +30,22 @@ describe('validatePublicUrl', () => {
     await expect(validatePublicUrl('not-a-url')).rejects.toThrow();
   });
 });
+
+describe('validatePublicUrl — Phase 2 private ranges', () => {
+  it('rejects CGNAT range 100.64.0.0/10', async () => {
+    await expect(validatePublicUrl('http://100.64.0.1/')).rejects.toThrow();
+  });
+
+  it('rejects TEST-NET-2 range 198.51.100.0/24', async () => {
+    await expect(validatePublicUrl('http://198.51.100.5/')).rejects.toThrow();
+  });
+});
+
+describe('validatePublicUrl — Phase 2 return shape', () => {
+  it('returns { url, resolvedIp } with a non-empty resolvedIp for a valid public URL', async () => {
+    const result = await validatePublicUrl('https://example.com/');
+    expect(typeof result.url).toBe('string');
+    expect(typeof result.resolvedIp).toBe('string');
+    expect(result.resolvedIp.length).toBeGreaterThan(0);
+  });
+});
