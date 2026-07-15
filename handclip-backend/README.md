@@ -31,14 +31,26 @@ End-to-end smoke test: `bash scripts/smoke-test-e2e.sh` (requires full stack up)
 
 ## Test
 
+51 tests across 8 spec files:
+
+| Package | Tests | Coverage |
+|---|---|---|
+| libs/shared | 32 | redact, validatePublicUrl (private ranges + return shape) |
+| apps/api | 10 | zod-pipe, PerEmailThrottlerGuard, uploads (cap/ownership/integrity), notifications (role-based authz) |
+| apps/worker | 9 | validate-path, transcription (Zod-typed segments) |
+
 ```bash
 pnpm -r test         # all packages
 pnpm --filter @handclip/api test
+pnpm --filter @handclip/shared test
+pnpm --filter @handclip/worker test
+pnpm -r type-check   # type gate
 ```
 
-Test files live next to source as `*.spec.ts`. No mocks — pure logic and zod
-schemas are the current surface; service-level tests come with the first real
-Supabase project.
+Test files live next to source as `*.spec.ts`. Service-level tests use minimal
+stubs (`as unknown as T` with a one-line reason) — no live Supabase/Redis
+required. `tsc --noEmit` is the type gate; `pnpm -r type-check` runs it
+across all packages.
 
 ## Env
 
@@ -47,11 +59,31 @@ use any LLM key — only the worker talks to OpenAI.
 
 ## Security posture
 
-- API: user JWT only (`@CurrentUser()`). RLS is the source of truth for authorization.
-- Worker: the only place that holds `SUPABASE_SERVICE_ROLE_KEY`. Calls API
-  via `X-Internal-API-Key` header.
-- SSRF: `validatePublicUrl` blocks private/loopback/IPv6 link-local.
-- FFmpeg: explicit `string[]` argv + `child_process.spawn` (no shell).
+- **Auth**: user JWT only (`@CurrentUser()`). RLS is the source of truth. Internal
+  worker→API calls go through `X-Internal-API-Key`; the header is normalized to
+  handle duplicate-header edge cases. Authority is checked via
+  `user.role === 'internal'`, not token-string emptiness.
+- **Rate limits**: global 300 req/min/IP. Per-email OTP throttler caps magic-link
+  requests at 3/hour/recipient (blocks email-bombing). Per-route overrides on
+  auth (5/min), uploads (10-1000/min), and others.
+- **Uploads**: in-memory state, capped at 5 concurrent uploads per user;
+  `completeUpload` enforces ownership + rejects incomplete-chunk sets
+  before any storage write.
+- **Worker**: the only place that holds `SUPABASE_SERVICE_ROLE_KEY`. FFmpeg via
+  `child_process.spawn` (no shell, no `exec`).
+- **SSRF**: `validatePublicUrl` blocks private IPv4 (incl. CGNAT 100.64/10 and
+  TEST-NETs), loopback, IPv6 link-local, single-label hostnames, and internal
+  service names. Returns `{url, resolvedIp}` so the consumer can connect by IP
+  and defeat DNS rebinding — undici dispatcher integration is a known
+  follow-up (current code uses the hostname, so DNS rebinding bypass is
+  theoretically possible until then).
+- **Boot**: `CORS_ORIGIN`, `APP_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+  `REDIS_HOST`, `INTERNAL_API_KEY` are all required and fail-fast.
+- **Process**: `uncaughtException` / `unhandledRejection` handlers, graceful
+  shutdown with 10s timeout, trust-proxy configurable for deployments behind
+  multiple LBs.
+- **Logs**: catch-all filter redacts the query string from 5xx logs (tokens
+  never leak to stdout).
 
 ## Status
 
@@ -63,6 +95,10 @@ use any LLM key — only the worker talks to OpenAI.
 | 3 | Worker reliability (lockDuration, FFmpeg cleanup, rollback) | done |
 | 4 | Prod-grade (trust proxy, shutdown, indexes, prune) | done |
 | 5 | Hygiene (PII redaction, timeouts, transcription hardening) | done |
+| 6 | Security hardening (OTP throttler, upload DoS, SSRF, auth boundaries) | done |
 
-Production audit: 36/36 P0 closed. **Runtime E2E still unverified** — the gap
-between "compila" and "funciona" needs `docker compose up` with real Supabase.
+Production audit: 36/36 P0 closed. 17 additional security findings closed
+in phase 6 — see commit `b1763b4` for the full list. Known gap: 2.2 DNS
+rebinding dispatcher integration (consumers still connect by hostname).
+**Runtime E2E still unverified** — the gap between "compila" and
+"funciona" needs `docker compose up` with real Supabase.
