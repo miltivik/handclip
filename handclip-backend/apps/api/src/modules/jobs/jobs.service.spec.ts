@@ -345,7 +345,7 @@ describe('JobsService getLatestJobForProject', () => {
 });
 
 describe('JobsService enqueueEditPrompt', () => {
-  it('creates a new edit-prompt row, marks it failed (not implemented), does not enqueue', async () => {
+  it('creates a new edit-prompt row and enqueues the queue job with tracking id', async () => {
     const add = jest.fn().mockResolvedValue({ id: 'bull-edit-1' });
     const updateBodies: any[] = [];
     const update = jest.fn((values: any) => {
@@ -367,11 +367,44 @@ describe('JobsService enqueueEditPrompt', () => {
 
     const result = await service.enqueueEditPrompt('project-1', 'user-1', 'Hazlo más rápido', 'client-edit-1');
     expect(result).toEqual({ jobId: 'edit-row-1' });
-    // The queue must NOT be touched: edit-prompt is not implemented yet.
-    expect(add).not.toHaveBeenCalled();
-    // The row must be marked failed so the client sees a terminal state.
+    // The queue job carries the tracking id and the user prompt.
+    expect(add).toHaveBeenCalledWith(
+      'apply-edit-prompt',
+      { projectId: 'project-1', userId: 'user-1', prompt: 'Hazlo más rápido', trackingJobId: 'edit-row-1' },
+      expect.objectContaining({ attempts: 2 }),
+    );
+    // The row is linked to the bullmq id, not marked failed.
+    const linkUpdate = updateBodies.find((b) => b && b.bullmq_id === 'bull-edit-1');
+    expect(linkUpdate).toBeDefined();
+    const markFailed = updateBodies.find((b) => b && b.status === 'failed');
+    expect(markFailed).toBeUndefined();
+  });
+
+  it('marks the row failed when the queue add throws', async () => {
+    const add = jest.fn().mockRejectedValue(new Error('redis down'));
+    const updateBodies: any[] = [];
+    const update = jest.fn((values: any) => {
+      updateBodies.push(values);
+      return { eq: jest.fn().mockResolvedValue({ error: null }) };
+    });
+    const insert = jest.fn(() => chainReturning({ data: { id: 'edit-row-2' }, error: null }));
+    const from = jest.fn((table: string) => {
+      if (table === 'jobs') {
+        return {
+          select: () => chainReturning({ data: null, error: null }),
+          insert,
+          update,
+        };
+      }
+      return {};
+    });
+    const service = buildService({ fromImpl: from, queues: { editPrompt: { add } } });
+
+    await expect(
+      service.enqueueEditPrompt('project-1', 'user-1', 'prompt', undefined),
+    ).rejects.toThrow('redis down');
     const markFailed = updateBodies.find(
-      (b) => b && b.status === 'failed' && typeof b.result?.error === 'string' && b.result.error.includes('no está disponible'),
+      (b) => b && b.status === 'failed' && typeof b.result?.error === 'string',
     );
     expect(markFailed).toBeDefined();
   });

@@ -5,10 +5,12 @@ import * as path from 'path';
 import * as os from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { SUBTITLE_STYLE_PRESETS, SubtitleStyleId, resolveSubtitleStyle } from '@handclip/shared';
 import { SupabaseService } from '../modules/supabase/supabase.service';
 import { NotificationsService } from '../modules/notifications/notifications.service';
 import { downloadMusicAsset, downloadSourceVideo } from './source-video';
 import { incrementExportCount } from '../providers/export-counter';
+import { generateASS, normalizeSubtitlesForExport, shouldRenderAsASS } from './subtitle-render';
 
 const execFileAsync = promisify(execFile);
 
@@ -23,6 +25,7 @@ interface RenderJobData {
   trimStart: number;
   trimEnd: number;
   subtitles: SubtitleSegment[];
+  subtitleStyle?: string;
   musicUrl?: string;
   musicVolume?: number;
   musicFadeIn?: number;
@@ -67,6 +70,17 @@ export function getDrawtextY(position: string): string {
     default:       return 'h-text_h-160';
   }
 }
+/**
+ * Escape a filesystem path for use as the value of a filtergraph option.
+ * Colons separate filter options and backslashes escape inside filtergraphs,
+ * so Windows drive paths must become C\:/style with forward slashes.
+ */
+export function escapeSubtitlesFilterPath(filterPath: string): string {
+  return filterPath
+    .replace(/\\/g, '/')
+    .replace(/:/g, '\\:')
+    .replace(/'/g, "\\'");
+}
 
 @Processor('render')
 export class RenderProcessor extends WorkerHost {
@@ -83,7 +97,6 @@ export class RenderProcessor extends WorkerHost {
     const textOverlay = job.data.textOverlay || null;
     const config = PRESETS[preset] || PRESETS.tiktok;
     const supabase = this.supabaseService.getServiceRoleClient();
-
     // API already created the job row; update it to active and link bullmq id.
     const dbJobId = trackingJobId;
     if (dbJobId) {
@@ -118,6 +131,7 @@ export class RenderProcessor extends WorkerHost {
     const outputPath = path.join(tempDir, `${projectId}-output.mp4`);
     const inputPath = path.join(tempDir, `${projectId}-render-input.mp4`);
     const srtPath = path.join(tempDir, `${projectId}-subs.srt`);
+    const assPath = path.join(tempDir, `${projectId}-subs.ass`);
     const thumbPath = path.join(tempDir, `${projectId}-thumb.jpg`);
 
     // Check export limit for limited tiers.
@@ -150,10 +164,22 @@ export class RenderProcessor extends WorkerHost {
       if (dbJobId) await supabase.from('jobs').update({ progress: 15 }).eq('id', dbJobId);
       await job.updateProgress(15);
 
-      // Step 2: Generate SRT subtitle file
-      if (subtitles.length > 0) {
-        const srt = this.generateSRT(subtitles);
-        fs.writeFileSync(srtPath, srt);
+      // Step 2: Build the subtitle track on the exported clip timeline.
+      // Premium styles render as animated ASS (libass); classic keeps SRT.
+      const subtitleStyle: SubtitleStyleId = resolveSubtitleStyle(job.data.subtitleStyle);
+      const useASS = shouldRenderAsASS(subtitleStyle);
+      const timelineSubtitles = normalizeSubtitlesForExport(subtitles, trimStart, trimEnd, speed);
+      let subtitleFile: string | null = null;
+      if (timelineSubtitles.length > 0) {
+        if (useASS) {
+          const ass = generateASS(timelineSubtitles, SUBTITLE_STYLE_PRESETS[subtitleStyle]);
+          fs.writeFileSync(assPath, ass, 'utf8');
+          subtitleFile = assPath;
+        } else {
+          const srt = this.generateSRT(timelineSubtitles);
+          fs.writeFileSync(srtPath, srt, 'utf8');
+          subtitleFile = srtPath;
+        }
       }
 
       // Step 3: Download music if provided
@@ -167,7 +193,8 @@ export class RenderProcessor extends WorkerHost {
       // Step 4: Build FFmpeg command
       const cmd = this.buildFFmpegCommand({
         inputPath,
-        srtPath: subtitles.length > 0 ? srtPath : null,
+        subtitleFile,
+        useASS,
         musicPath,
         trimStart,
         trimEnd,
@@ -195,7 +222,8 @@ export class RenderProcessor extends WorkerHost {
         const fb = codecFallbacks[attempt];
         const attemptArgs = this.buildFFmpegCommand({
           inputPath,
-          srtPath: subtitles.length > 0 ? srtPath : null,
+          subtitleFile,
+          useASS,
           musicPath,
           trimStart,
           trimEnd,
@@ -367,7 +395,7 @@ export class RenderProcessor extends WorkerHost {
       throw err;
     } finally {
       // Cleanup temp files
-      for (const f of [inputPath, srtPath, musicPath, outputPath]) {
+      for (const f of [inputPath, srtPath, assPath, musicPath, outputPath]) {
         if (f) try { fs.unlinkSync(f); } catch {}
       }
       // Cleanup thumbnail
@@ -395,7 +423,8 @@ export class RenderProcessor extends WorkerHost {
   /** Construir argumentos FFmpeg como array (evita shell injection) */
   private buildFFmpegCommand(opts: {
     inputPath: string;
-    srtPath: string | null;
+    subtitleFile: string | null;
+    useASS: boolean;
     musicPath: string | null;
     trimStart: number;
     trimEnd: number;
@@ -410,7 +439,7 @@ export class RenderProcessor extends WorkerHost {
     speed?: number;
     textOverlay?: { text: string; position: string } | null;
   }): string[] {
-    const { inputPath, srtPath, musicPath, trimStart, trimEnd, config, musicVolume, musicFadeIn, musicFadeOut, outputPath, codec, preset, crf, speed = 1, textOverlay = null } = opts;
+    const { inputPath, subtitleFile, useASS, musicPath, trimStart, trimEnd, config, musicVolume, musicFadeIn, musicFadeOut, outputPath, codec, preset, crf, speed = 1, textOverlay = null } = opts;
     const duration = trimEnd - trimStart;
     const outputDuration = duration / speed;
     // Filter chain for video
@@ -432,9 +461,15 @@ export class RenderProcessor extends WorkerHost {
       const y = getDrawtextY(textOverlay.position);
       videoFilters.push(`drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontcolor=white:fontsize=56:borderw=3:bordercolor=black`);
     }
-    // Subtitle overlay
-    if (srtPath) {
-      videoFilters.push(`subtitles='${srtPath}':force_style='Fontname=Arial,Fontsize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=40'`);
+    // Subtitle overlay: ASS carries its own embedded styles; SRT uses
+    // force_style. The path is escaped for the filtergraph parser.
+    if (subtitleFile) {
+      const escapedSubtitlePath = escapeSubtitlesFilterPath(subtitleFile);
+      if (useASS) {
+        videoFilters.push(`subtitles=filename='${escapedSubtitlePath}'`);
+      } else {
+        videoFilters.push(`subtitles=filename='${escapedSubtitlePath}':force_style='Fontname=Arial,Fontsize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=40'`);
+      }
     }
 
     const videoFilterStr = videoFilters.join(',');

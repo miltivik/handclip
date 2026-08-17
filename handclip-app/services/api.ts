@@ -308,6 +308,14 @@ export const api = {
   deleteProject: (projectId: string) =>
     del<void>(`/projects/${projectId}`),
 
+  // ---- Share links (collaboration) ----
+  createShareLink: (projectId: string) =>
+    post<{ shareId: string; token: string; createdAt: string }>(`/projects/${projectId}/share`, {}),
+  listShareLinks: (projectId: string) =>
+    get<{ shares: { shareId: string; token: string; createdAt: string }[] }>(`/projects/${projectId}/shares`),
+  revokeShareLink: (projectId: string, shareId: string) =>
+    del<{ revoked: boolean }>(`/projects/${projectId}/share/${shareId}`),
+
   // ---- Clips ----
   getClips: (projectId: string) =>
     get<ClipCandidate[]>(`/projects/${projectId}/clips`),
@@ -328,6 +336,7 @@ export const api = {
       trimEnd: number;
       subtitles?: SubtitleSegment[] | { text: string; startTime: number; endTime: number }[];
       preset?: string;
+      subtitleStyle?: string;
       musicUrl?: string;
       musicVolume?: number;
       speed?: 0.5 | 1 | 2;

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 
 interface ProjectRow {
@@ -11,6 +12,42 @@ interface ProjectRow {
   status?: string;
   created_at: string;
   updated_at: string;
+}
+
+interface ProjectShareRow {
+  id: string;
+  project_id: string;
+  created_by: string;
+  token: string;
+  revoked_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export interface ProjectShareLink {
+  shareId: string;
+  token: string;
+  createdAt: string;
+}
+
+export interface PublicShareClip {
+  id: string;
+  startTime: number;
+  endTime: number;
+  duration: number;
+  confidenceScore: number;
+  suggestedCaption: string | null;
+  transcriptSnippet: string | null;
+  moodTags: string[];
+  status: string;
+}
+
+export interface PublicShareView {
+  projectId: string;
+  title: string;
+  createdAt: string;
+  status: string;
+  clips: PublicShareClip[];
 }
 
 export interface Project {
@@ -220,6 +257,145 @@ export class ProjectsService {
       throw new NotFoundException('Project not found');
     }
     return data as ProjectRow;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Share links (collaboration)
+  // ---------------------------------------------------------------------------
+
+  /** Max active (non-revoked, non-expired) links per project. */
+  private static readonly MAX_ACTIVE_SHARES_PER_PROJECT = 10;
+
+  async createShareLink(projectId: string, userId: string): Promise<ProjectShareLink> {
+    await this.assertOwnedBy(projectId, userId);
+    const client = this.supabaseService.getServiceRoleClient();
+
+    const { count, error: countError } = await client
+      .from('project_shares')
+      .select('id', { count: 'exact', head: true })
+      .eq('project_id', projectId)
+      .is('revoked_at', null);
+    if (countError) {
+      throw new Error(`Error al contar enlaces: ${countError.message}`);
+    }
+    if ((count ?? 0) >= ProjectsService.MAX_ACTIVE_SHARES_PER_PROJECT) {
+      throw new BadRequestException(
+        `Este proyecto ya tiene ${count} enlaces activos. Revoca alguno antes de crear otro.`,
+      );
+    }
+
+    const { data, error } = await client
+      .from('project_shares')
+      .insert({
+        project_id: projectId,
+        created_by: userId,
+        token: randomBytes(24).toString('base64url'),
+      })
+      .select('id, token, created_at')
+      .single();
+
+    if (error || !data) {
+      throw new Error(`Error al crear el enlace: ${error?.message}`);
+    }
+    return { shareId: data.id, token: data.token, createdAt: data.created_at };
+  }
+
+  async revokeShareLink(projectId: string, userId: string, shareId: string): Promise<void> {
+    await this.assertOwnedBy(projectId, userId);
+    const { error } = await this.supabaseService
+      .getServiceRoleClient()
+      .from('project_shares')
+      .update({ revoked_at: new Date().toISOString() })
+      .eq('id', shareId)
+      .eq('project_id', projectId)
+      .eq('created_by', userId)
+      .is('revoked_at', null);
+    if (error) {
+      throw new Error(`Error al revocar el enlace: ${error.message}`);
+    }
+  }
+
+  async listShareLinks(projectId: string, userId: string): Promise<ProjectShareLink[]> {
+    await this.assertOwnedBy(projectId, userId);
+    const { data, error } = await this.supabaseService
+      .getServiceRoleClient()
+      .from('project_shares')
+      .select('id, token, created_at, revoked_at')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false });
+    if (error) {
+      throw new Error(`Error al listar enlaces: ${error.message}`);
+    }
+    return ((data as ProjectShareRow[] | null) ?? [])
+      .filter((row) => !row.revoked_at)
+      .map((row) => ({ shareId: row.id, token: row.token, createdAt: row.created_at }));
+  }
+
+  /**
+   * Resolves a share token into read-only viewer data. Returns null for
+   * unknown, revoked or expired tokens. Never exposes the source video
+   * URL or any owner-identifying field.
+   */
+  async getPublicShareView(token: string): Promise<PublicShareView | null> {
+    if (!token || token.length > 128) {
+      return null;
+    }
+    const client = this.supabaseService.getServiceRoleClient();
+
+    const { data: shareRow, error: shareError } = await client
+      .from('project_shares')
+      .select('id, project_id, revoked_at, expires_at')
+      .eq('token', token)
+      .maybeSingle();
+    if (shareError || !shareRow) {
+      return null;
+    }
+    const share = shareRow as Pick<ProjectShareRow, 'id' | 'project_id' | 'revoked_at' | 'expires_at'>;
+    if (share.revoked_at) {
+      return null;
+    }
+    if (share.expires_at && new Date(share.expires_at).getTime() < Date.now()) {
+      return null;
+    }
+
+    const { data: projectRow, error: projectError } = await client
+      .from('projects')
+      .select('id, title, status, created_at')
+      .eq('id', share.project_id)
+      .single();
+    if (projectError || !projectRow) {
+      return null;
+    }
+
+    const { data: clipRows, error: clipsError } = await client
+      .from('clips')
+      .select(
+        'id, start_time, end_time, duration, confidence_score, suggested_caption, transcript_snippet, mood_tags, status',
+      )
+      .eq('project_id', share.project_id)
+      .neq('status', 'deleted')
+      .order('confidence_score', { ascending: false });
+    if (clipsError) {
+      throw new Error(`Error al cargar clips del enlace: ${clipsError.message}`);
+    }
+
+    return {
+      projectId: projectRow.id,
+      title: projectRow.title,
+      createdAt: projectRow.created_at,
+      status: projectRow.status ?? 'ready',
+      clips: ((clipRows as any[] | null) ?? []).map((row) => ({
+        id: row.id,
+        startTime: Number(row.start_time) || 0,
+        endTime: Number(row.end_time) || 0,
+        duration: Number(row.duration) || 0,
+        confidenceScore: Number(row.confidence_score) || 0,
+        suggestedCaption: row.suggested_caption ?? null,
+        transcriptSnippet: row.transcript_snippet ?? null,
+        moodTags: Array.isArray(row.mood_tags) ? row.mood_tags : [],
+        status: row.status ?? 'candidate',
+      })),
+    };
   }
 
   private async signStoragePath(storagePath: string): Promise<string> {

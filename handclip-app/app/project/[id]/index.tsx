@@ -1,10 +1,13 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { View, FlatList, StyleSheet, Text, ActivityIndicator, TouchableOpacity, TextInput } from 'react-native';
+import { View, FlatList, StyleSheet, Text, ActivityIndicator, TouchableOpacity, TextInput, Share, Alert } from 'react-native';
 import { useEffect, useState, useMemo } from 'react';
 import CandidateCard from '../../../components/clips/CandidateCard';
 import EmptyState from '../../../components/ui/EmptyState';
 import { useProjectStore } from '../../../stores/project.store';
-import { ClipCandidate } from '../../../services/api';
+import { useAuthStore } from '../../../stores/auth.store';
+import { showAccountRequired } from '../../../lib/account-required';
+import { API_URL } from '../../../lib/constants';
+import { ClipCandidate, api } from '../../../services/api';
 
 function clipMatchesQuery(clip: ClipCandidate, query: string): boolean {
   if (!query) return true;
@@ -42,6 +45,36 @@ export default function ProjectScreen() {
   const filteredClips = useMemo(() => displayedClips.filter(c => clipMatchesQuery(c, debouncedQuery)), [displayedClips, debouncedQuery]);
   const handleRetry = () => {
     router.replace(`/import/processing?projectId=${id}`);
+  };
+
+  const [sharing, setSharing] = useState(false);
+  const handleShare = async () => {
+    if (!id) return;
+    const isAnonymous = useAuthStore.getState().isAnonymous;
+    if (isAnonymous) {
+      showAccountRequired();
+      return;
+    }
+    if (sharing) return;
+    setSharing(true);
+    try {
+      const { token } = await api.createShareLink(id);
+      const url = `${API_URL}/api/public/shares/${token}`;
+      try {
+        await Share.share({
+          message: `Mira los clips candidatos de mi proyecto en HandClip: ${url}`,
+          url,
+          title: 'HandClip',
+        });
+      } catch {
+        // Share sheet unavailable (e.g. some web contexts): let the user copy.
+        Alert.alert('Enlace creado', url);
+      }
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'No se pudo crear el enlace');
+    } finally {
+      setSharing(false);
+    }
   };
 
   if (isLoading) {
@@ -137,6 +170,18 @@ export default function ProjectScreen() {
       >
         <Text style={styles.manualButtonText}>Seleccionar manualmente</Text>
       </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.shareButton, sharing && styles.shareButtonDisabled]}
+        onPress={handleShare}
+        disabled={sharing}
+        accessibilityLabel="Compartir proyecto por enlace"
+        accessibilityRole="button"
+      >
+        <Text style={styles.shareButtonText}>
+          {sharing ? 'Creando enlace...' : 'Compartir por enlace'}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -213,6 +258,22 @@ const styles = StyleSheet.create({
   },
   manualButtonText: {
     color: '#333',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  shareButton: {
+    backgroundColor: '#007AFF',
+    margin: 16,
+    marginTop: 0,
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  shareButtonDisabled: {
+    opacity: 0.6,
+  },
+  shareButtonText: {
+    color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },

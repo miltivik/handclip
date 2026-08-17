@@ -25,7 +25,7 @@ export interface ProviderConfig {
 }
 
 export interface StageTask {
-  stage: 'transcription' | 'clip-analysis' | 'captions' | 'broll';
+  stage: 'transcription' | 'clip-analysis' | 'captions' | 'broll' | 'edit-prompt' | 'render-plan';
   systemPrompt: string;
   userPrompt: string;
   maxTokens?: number;

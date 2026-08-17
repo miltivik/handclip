@@ -13,7 +13,8 @@ const minimalConfig = {
 
 const baseOpts = {
   inputPath: '/tmp/input.mp4',
-  srtPath: null as string | null,
+  subtitleFile: null as string | null,
+  useASS: false,
   musicPath: null as string | null,
   trimStart: 0,
   trimEnd: 10,
@@ -171,7 +172,7 @@ describe('buildFFmpegCommand textOverlay', () => {
     // With both text overlay and subtitles
     const cmd = callBuildFFmpegCommand({
       ...baseOpts,
-      srtPath: '/tmp/subs.srt',
+      subtitleFile: '/tmp/subs.srt',
       textOverlay: { text: 'Overlay', position: 'top' },
     });
     const drawtextIdx = cmd.indexOf('drawtext=');

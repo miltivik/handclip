@@ -21,6 +21,7 @@ interface RenderJobDataBase {
   trimStart: number;
   trimEnd: number;
   subtitles: any[];
+  subtitleStyle?: string;
   musicUrl?: string;
   musicVolume?: number;
   musicFadeIn?: number;
@@ -52,6 +53,7 @@ export interface EnqueueRenderInput {
   trimStart: number;
   trimEnd: number;
   subtitles: any[];
+  subtitleStyle?: string;
   musicUrl?: string;
   musicVolume?: number;
   musicFadeIn?: number;
@@ -268,7 +270,7 @@ export class JobsService {
         type: 'edit_prompt',
         status: 'queued',
         progress: 0,
-        result: { prompt, notImplemented: true },
+        result: { prompt },
         client_request_id: clientRequestId ?? null,
       })
       .select()
@@ -286,14 +288,30 @@ export class JobsService {
       throw new Error(`Failed to insert edit-prompt job: ${error?.message}`);
     }
 
-    // Don't enqueue the queue job: edit-prompt is not yet implemented.
-    // Mark the job as failed so the client (and resume logic) sees a
-    // terminal state immediately and shows "Función aún no disponible".
-    await this.markJobFailed(
-      jobsRow.id,
-      'La edición por prompt aún no está disponible.',
-    );
-    return { jobId: jobsRow.id };
+    try {
+      const job = await this.editPromptQueue.add(
+        'apply-edit-prompt',
+        { projectId, userId, prompt, trackingJobId: jobsRow.id },
+        { attempts: 2, backoff: { type: 'exponential', delay: 5000 } },
+      );
+
+      const { error: linkError } = await supabase
+        .from('jobs')
+        .update({ bullmq_id: job.id as string })
+        .eq('id', jobsRow.id);
+      if (linkError) {
+        await this.markJobFailed(jobsRow.id, `Failed to link edit-prompt job to queue: ${linkError.message}`);
+        throw new Error(`Failed to link edit-prompt job to queue: ${linkError.message}`);
+      }
+
+      return { jobId: jobsRow.id };
+    } catch (err: any) {
+      await this.markJobFailed(
+        jobsRow.id,
+        `Failed to enqueue edit-prompt job: ${err?.message ?? String(err)}`,
+      );
+      throw err;
+    }
   }
 
   // ---------------------------------------------------------------------------

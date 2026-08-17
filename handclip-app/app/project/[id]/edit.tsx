@@ -14,6 +14,7 @@ import { useJobsStore, getOrCreateClientRequestId } from '../../../stores/jobs.s
 import { useAppVideoPlayer } from '../../../hooks/useVideoPlayer';
 import { useAuthStore } from '../../../stores/auth.store';
 import { showAccountRequired } from '../../../lib/account-required';
+import { DEFAULT_SUBTITLE_STYLE, SUBTITLE_STYLES, type SubtitleStyleId } from '../../../lib/subtitle-styles';
 import { api } from '../../../services/api';
 interface EditingSubtitle {
   index: number;
@@ -41,6 +42,7 @@ export default function EditScreen() {
   } = useEditorStore();
   const [editingSubtitle, setEditingSubtitle] = useState<EditingSubtitle | null>(null);
   const [editPromptOpen, setEditPromptOpen] = useState(false);
+  const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyleId>(DEFAULT_SUBTITLE_STYLE);
   const [musicUrl, setMusicUrl] = useState<string | null>(null);
   const [musicUploading, setMusicUploading] = useState(false);
   const [musicVolume, setMusicVolume] = useState(0.3);
@@ -114,6 +116,7 @@ export default function EditScreen() {
         trimEnd,
         subtitles: displaySubtitles,
         preset,
+        subtitleStyle,
         musicUrl: musicUrl || undefined,
         musicVolume,
         speed,
@@ -345,6 +348,48 @@ export default function EditScreen() {
                 </Text>
               </TouchableOpacity>
             ))}
+          </View>
+        </View>
+        {/* Subtitle style selector */}
+        <View style={styles.subtitleStyleSection}>
+          <Text style={styles.speedLabel}>Estilo de subtítulos</Text>
+          <View style={styles.subtitleStyleOptions}>
+            {SUBTITLE_STYLES.map((style) => {
+              const selected = subtitleStyle === style.id;
+              return (
+                <TouchableOpacity
+                  key={style.id}
+                  style={[
+                    styles.subtitleStyleButton,
+                    selected && styles.subtitleStyleButtonSelected,
+                  ]}
+                  onPress={() => setSubtitleStyle(style.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={'Estilo de subtítulos ' + style.label}
+                  accessibilityState={{ selected }}
+                >
+                  <Text
+                    style={[
+                      styles.subtitleStylePreview,
+                      { color: style.color, textShadowColor: style.outline },
+                      style.uppercase && styles.subtitleStylePreviewUpper,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    Aa
+                  </Text>
+                  <Text
+                    style={[
+                      styles.subtitleStyleLabel,
+                      selected && styles.subtitleStyleLabelSelected,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {style.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </View>
         {/* Text overlay */}
@@ -590,11 +635,52 @@ const styles = StyleSheet.create({
   speedButtonTextSelected: {
     color: '#fff',
   },
+  // Subtitle style selector styles
+  subtitleStyleSection: {
+    marginBottom: 16,
+  },
+  subtitleStyleOptions: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+  },
+  subtitleStyleButton: {
+    backgroundColor: '#333',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    minWidth: 62,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  subtitleStyleButtonSelected: {
+    borderColor: '#007AFF',
+    backgroundColor: '#1c2a3a',
+  },
+  subtitleStylePreview: {
+    fontSize: 18,
+    fontWeight: '700',
+    textShadowRadius: 2,
+    textShadowOffset: { width: 1, height: 1 },
+  },
+  subtitleStylePreviewUpper: {
+    textTransform: 'uppercase',
+  },
+  subtitleStyleLabel: {
+    color: '#aaa',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  subtitleStyleLabelSelected: {
+    color: '#fff',
+    fontWeight: '600',
+  },
   // Text overlay styles
   textOverlaySection: {
     marginBottom: 16,
-  },
-  textOverlayLabel: {
+  },  textOverlayLabel: {
     fontSize: 14,
     color: '#888',
     marginBottom: 8,

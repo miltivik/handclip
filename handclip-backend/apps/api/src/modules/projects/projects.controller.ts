@@ -11,12 +11,18 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { resolveSubtitleStyle } from '@handclip/shared';
 import { ProjectsService } from './projects.service';
 import { JobsService } from '../jobs/jobs.service';
 import { BearerUserGuard } from '../auth/bearer-user.guard';
 import { CurrentUser, ResolvedUser } from '../auth/current-user.decorator';
 const ALLOWED_SPEEDS = [0.5, 1, 2] as const;
 type ExportSpeed = (typeof ALLOWED_SPEEDS)[number];
+
+function parseSubtitleStyle(value: unknown): string {
+  // Invalid ids degrade to 'classic' instead of failing the export.
+  return resolveSubtitleStyle(value);
+}
 
 function parseExportSpeed(value: unknown): ExportSpeed {
   if (value === undefined || value === null) return 1;
@@ -198,6 +204,7 @@ export class ProjectsController {
       trimStart: number;
       trimEnd: number;
       subtitles: any[];
+      subtitleStyle?: string;
       musicUrl?: string;
       musicVolume?: number;
       musicFadeIn?: number;
@@ -207,12 +214,13 @@ export class ProjectsController {
       textOverlay?: { text: string; position: 'top' | 'center' | 'bottom' };
       clientRequestId?: string;
     },
-  ) {
+  ): Promise<{ jobId: string }> {
     const sourceVideoPath = await this.projectsService.getSourceVideoPath(id, user.id);
     const speed = parseExportSpeed(body.speed);
     const textOverlay = parseTextOverlay(body.textOverlay);
     const clientRequestId = parseClientRequestId(body.clientRequestId);
     const musicUrl = parseMusicUrl(body.musicUrl, user.id);
+    const subtitleStyle = parseSubtitleStyle(body.subtitleStyle);
 
     const result = await this.jobsService.enqueueRender({
       projectId: id,
@@ -221,6 +229,7 @@ export class ProjectsController {
       trimStart: body.trimStart,
       trimEnd: body.trimEnd,
       subtitles: body.subtitles,
+      subtitleStyle,
       musicUrl,
       musicVolume: body.musicVolume,
       musicFadeIn: body.musicFadeIn,
@@ -242,6 +251,32 @@ export class ProjectsController {
     @Param('jobId') jobId: string,
   ) {
     return this.jobsService.getJobForUser(jobId, user.id);
+  }
+
+  @Post(':id/share')
+  async createShareLink(
+    @CurrentUser() user: ResolvedUser,
+    @Param('id') id: string,
+  ) {
+    return this.projectsService.createShareLink(id, user.id);
+  }
+
+  @Get(':id/shares')
+  async listShareLinks(
+    @CurrentUser() user: ResolvedUser,
+    @Param('id') id: string,
+  ) {
+    return { shares: await this.projectsService.listShareLinks(id, user.id) };
+  }
+
+  @Delete(':id/share/:shareId')
+  async revokeShareLink(
+    @CurrentUser() user: ResolvedUser,
+    @Param('id') id: string,
+    @Param('shareId') shareId: string,
+  ): Promise<{ revoked: true }> {
+    await this.projectsService.revokeShareLink(id, user.id, shareId);
+    return { revoked: true };
   }
 
   @Post(':id/edit-prompt')
